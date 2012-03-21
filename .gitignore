@@ -1,6 +1,5 @@
 INSTALL
 Makefile.in
-*/Makefile.in
 aclocal.m4
 autom4te.cache
 compile
@@ -12,3 +11,12 @@ depcomp
 install-sh
 ltmain.sh
 missing
+Makefile
+.deps
+config.h
+config.log
+config.status
+libtool
+mark5access.pc
+mark5access.spec
+stamp-h1
