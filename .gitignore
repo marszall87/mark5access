@@ -1,3 +1,7 @@
+*.o
+*.lo
+*.la
+.libs
 INSTALL
 Makefile.in
 aclocal.m4
@@ -20,3 +24,14 @@ libtool
 mark5access.pc
 mark5access.spec
 stamp-h1
+bbsum/bbsum
+examples/directory2filelist
+examples/m5bstate
+examples/m5d
+examples/m5findformats
+examples/m5fold
+examples/m5test
+examples/m5tsys
+examples/test5b
+examples/test_mark5_stream
+examples/test_unpacker
