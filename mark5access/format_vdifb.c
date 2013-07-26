@@ -1,5 +1,5 @@
 /***************************************************************************
- *   Copyright (C) 2009-2012 by Walter Brisken, Adam Deller, Chris Phillips*
+ *   Copyright (C) 2009-2013 by Walter Brisken, Adam Deller, Chris Phillips*
  *                                                                         *
  *   This program is free software; you can redistribute it and/or modify  *
  *   it under the terms of the GNU General Public License as published by  *
@@ -26,6 +26,15 @@
 // $LastChangedDate$
 //
 //============================================================================
+
+// This is NOT standard VDIF format.  VDIFB is a VDIF-like format that should not
+// be used for intercommunication of VLBI data.  Instead it is an intermediate
+// format that is convenient to use when interleaving a multi-thread VDIF stream 
+// for DiFX consumption.  The B in VDIFB stands for "Byte".  In this pseudo format
+// 1, 2, 4 or 8 samples from each channel in 8, 4, 2, 1 bits/sample respectively
+// are stored in one byte.  Byte N of a sequence comes from channel N%nchan.
+// It is possible to extend this thought to 16 bit granularity (VDIFS) and 32 bit
+// granularity (VDIFW).
 
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
@@ -55,10 +64,10 @@ static float complex complex_lut2bit[256][2];
 static float complex complex_lut4bit[256];
 
 /* for use in counting high states; 2-bit support only at this time */
-static unsigned char countlut2bit[256][4];
+static unsigned char countlut2bit[256];
 
-/* internal data specific to VDIF */
-struct mark5_format_vdif
+/* internal data specific to VDIFB */
+struct mark5_format_vdifb
 {
 	int databytesperpacket;		/* = packetsize - frameheadersize */
 	int frameheadersize;		/* 16 (legacy) or 32 (normal) */
@@ -92,17 +101,14 @@ static void initluts()
 		}
 
 		/* lut2bit */
+		countlut2bit[b] = 0;
 		for(i = 0; i < 4; i++)
 		{
 			l = (b >> (2*i)) & 0x03;
 			lut2bit[b][i] = lut4level[l];
-			if(fabs(lut2bit[b][i]) < 1.1)
+			if(fabs(lut2bit[b][i]) > 1.1)
 			{
-				countlut2bit[b][i] = 0;
-			}
-			else
-			{
-				countlut2bit[b][i] = 1;
+				++countlut2bit[b];
 			}
 		}
 
@@ -143,9 +149,9 @@ static void initluts()
 }
 
 /* inspect frame (packet) and return mjd and time */
-static int mark5_stream_frame_time_vdif(const struct mark5_stream *ms, int *mjd, int *sec, double *ns)
+static int mark5_stream_frame_time_vdifb(const struct mark5_stream *ms, int *mjd, int *sec, double *ns)
 {
-	struct mark5_format_vdif *v;
+	struct mark5_format_vdifb *v;
 	unsigned int word0, word1;
 	int seconds, days;
 	int refepoch;
@@ -168,7 +174,7 @@ static int mark5_stream_frame_time_vdif(const struct mark5_stream *ms, int *mjd,
 	{
 		return -1;
 	}
-	v = (struct mark5_format_vdif *)(ms->formatdata);
+	v = (struct mark5_format_vdifb *)(ms->formatdata);
 
 #ifdef WORDS_BIGENDIAN
 	{
@@ -216,45 +222,27 @@ static int mark5_stream_frame_time_vdif(const struct mark5_stream *ms, int *mjd,
 
 /************************* decode routines **************************/
 
-static int vdif_decode_1channel_1bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
+static int vdifb_decode_1channel_1bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
 {
 	const unsigned char *buf;
-	const float *fp;
 	int o, i;
 	int nblank = 0;
 
 	buf = ms->payload;
 	i = ms->readposition;
 
-	for(o = 0; o < nsamp; o++)
+	for(o = 0; o < nsamp; o += 8)
 	{
 		if(i >= ms->blankzoneendvalid[0])
 		{
-			fp = zeros;
-			nblank++;
+			memcpy(data[0]+o, zeros, 8*sizeof(float));
+			++nblank;
+			++i;
 		}
 		else
 		{
-			fp = lut1bit[buf[i]];
+			memcpy(data[0]+o, lut1bit[buf[i++]], 8*sizeof(float));
 		}
-
-		i++;
-
-		data[0][o] = fp[0];
-		o++;
-		data[0][o] = fp[1];
-		o++;
-		data[0][o] = fp[2];
-		o++;
-		data[0][o] = fp[3];
-		o++;
-		data[0][o] = fp[4];
-		o++;
-		data[0][o] = fp[5];
-		o++;
-		data[0][o] = fp[6];
-		o++;
-		data[0][o] = fp[7];
 
 		if(i >= ms->databytes)
 		{
@@ -272,41 +260,155 @@ static int vdif_decode_1channel_1bit_decimation1(struct mark5_stream *ms, int ns
 	return nsamp - 8*nblank;
 }
 
-static int vdif_decode_2channel_1bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
+static int vdifb_decode_2channel_1bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
 {
 	const unsigned char *buf;
-	const const float *fp;
 	int o, i;
 	int nblank = 0;
 
 	buf = ms->payload;
 	i = ms->readposition;
 
-	for(o = 0; o < nsamp; o++)
+	for(o = 0; o < nsamp; o += 8)
 	{
 		if(i >= ms->blankzoneendvalid[0])
 		{
-			fp = zeros;
-			nblank++;
+			memcpy(data[0]+o, zeros, 8*sizeof(float));
+			memcpy(data[1]+o, zeros, 8*sizeof(float));
+			++nblank;
+			i += 2;
 		}
 		else
 		{
-			fp = lut1bit[buf[i]];
+			memcpy(data[0]+o, lut1bit[buf[i++]], 8*sizeof(float));
+			memcpy(data[1]+o, lut1bit[buf[i++]], 8*sizeof(float));
 		}
 
-		i++;
+		if(i >= ms->databytes)
+		{
+			if(mark5_stream_next_frame(ms) < 0)
+			{
+				return -1;
+			}
+			buf = ms->payload;
+			i = 0;
+		}
+	}
 
-		data[0][o] = fp[0];
-		data[1][o] = fp[1];
-		o++;
-		data[0][o] = fp[2];
-		data[1][o] = fp[3];
-		o++;
-		data[0][o] = fp[4];
-		data[1][o] = fp[5];
-		o++;
-		data[0][o] = fp[6];
-		data[1][o] = fp[7];
+	ms->readposition = i;
+
+	return nsamp - 8*nblank;
+}
+
+static int vdifb_decode_4channel_1bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
+{
+	const unsigned char *buf;
+	int o, i;
+	int nblank = 0;
+
+	buf = ms->payload;
+	i = ms->readposition;
+
+	for(o = 0; o < nsamp; o += 8)
+	{
+		if(i >= ms->blankzoneendvalid[0])
+		{
+			memcpy(data[0]+o, zeros, 8*sizeof(float));
+			memcpy(data[1]+o, zeros, 8*sizeof(float));
+			memcpy(data[2]+o, zeros, 8*sizeof(float));
+			memcpy(data[3]+o, zeros, 8*sizeof(float));
+			++nblank;
+			i += 4;
+		}
+		else
+		{
+			memcpy(data[0]+o, lut1bit[buf[i++]], 8*sizeof(float));
+			memcpy(data[1]+o, lut1bit[buf[i++]], 8*sizeof(float));
+			memcpy(data[2]+o, lut1bit[buf[i++]], 8*sizeof(float));
+			memcpy(data[3]+o, lut1bit[buf[i++]], 8*sizeof(float));
+		}
+
+		if(i >= ms->databytes)
+		{
+			if(mark5_stream_next_frame(ms) < 0)
+			{
+				return -1;
+			}
+			buf = ms->payload;
+			i = 0;
+		}
+	}
+
+	ms->readposition = i;
+
+	return nsamp - 8*nblank;
+}
+
+static int vdifb_decode_Nchannel_1bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
+{
+	const unsigned char *buf;
+	int o, i, c;
+	int nblank = 0;
+
+	buf = ms->payload;
+	i = ms->readposition;
+
+	for(o = 0; o < nsamp; o += 8)
+	{
+		if(i >= ms->blankzoneendvalid[0])
+		{
+			for(c = 0; c < ms->nchan; ++c)
+			{
+				memcpy(data[c]+o, zeros, 8*sizeof(float));
+			}
+			++nblank;
+			i += ms->nchan;
+		}
+		else
+		{
+			for(c = 0; c < ms->nchan; ++c)
+			{
+				memcpy(data[c]+o, lut1bit[buf[i++]], 8*sizeof(float));
+			}
+		}
+
+		if(i >= ms->databytes)
+		{
+			if(mark5_stream_next_frame(ms) < 0)
+			{
+				return -1;
+			}
+			buf = ms->payload;
+			i = 0;
+		}
+	}
+
+	ms->readposition = i;
+
+	return nsamp - 8*nblank;
+}
+
+static int vdifb_decode_1channel_2bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
+{
+	const unsigned char *buf;
+	int o, i;
+	int nblank = 0;
+
+	buf = ms->payload;
+	i = ms->readposition;
+
+	for(o = 0; o < nsamp; o += 4)
+	{
+		if(i >= ms->blankzoneendvalid[0])
+		{
+			memcpy(data[0]+o, zeros, 4*sizeof(float));
+			++nblank;
+			++i;
+		}
+		else
+		{
+			memcpy(data[0]+o, lut2bit[buf[i++]], 4*sizeof(float));
+		}
 
 		if(i >= ms->databytes)
 		{
@@ -324,274 +426,29 @@ static int vdif_decode_2channel_1bit_decimation1(struct mark5_stream *ms, int ns
 	return nsamp - 4*nblank;
 }
 
-static int vdif_decode_4channel_1bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
+static int vdifb_decode_2channel_2bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
 {
 	const unsigned char *buf;
-	const const float *fp;
 	int o, i;
 	int nblank = 0;
 
 	buf = ms->payload;
 	i = ms->readposition;
 
-	for(o = 0; o < nsamp; o++)
+	for(o = 0; o < nsamp; o += 4)
 	{
 		if(i >= ms->blankzoneendvalid[0])
 		{
-			fp = zeros;
-			nblank++;
-		}
-		else
-		{
-			fp = lut1bit[buf[i]];
-		}
-
-		i++;
-
-		data[0][o] = fp[0];
-		data[1][o] = fp[1];
-		data[2][o] = fp[2];
-		data[3][o] = fp[3];
-		o++;
-		data[0][o] = fp[4];
-		data[1][o] = fp[5];
-		data[2][o] = fp[6];
-		data[3][o] = fp[7];
-
-		if(i >= ms->databytes)
-		{
-			if(mark5_stream_next_frame(ms) < 0)
-			{
-				return -1;
-			}
-			buf = ms->payload;
-			i = 0;
-		}
-	}
-
-	ms->readposition = i;
-
-	return nsamp - 2*nblank;
-}
-
-static int vdif_decode_8channel_1bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
-{
-	const unsigned char *buf;
-	const float *fp;
-	int o, i;
-	int nblank = 0;
-
-	buf = ms->payload;
-	i = ms->readposition;
-
-	for(o = 0; o < nsamp; o++)
-	{
-		if(i >= ms->blankzoneendvalid[0])
-		{
-			fp = zeros;
-			nblank++;
-		}
-		else
-		{
-			fp = lut1bit[buf[i]];
-		}
-
-		i++;
-
-		data[0][o] = fp[0];
-		data[1][o] = fp[1];
-		data[2][o] = fp[2];
-		data[3][o] = fp[3];
-		data[4][o] = fp[4];
-		data[5][o] = fp[5];
-		data[6][o] = fp[6];
-		data[7][o] = fp[7];
-
-		if(i >= ms->databytes)
-		{
-			if(mark5_stream_next_frame(ms) < 0)
-			{
-				return -1;
-			}
-			buf = ms->payload;
-			i = 0;
-		}
-	}
-
-	ms->readposition = i;
-
-	return nsamp - nblank;
-}
-
-static int vdif_decode_16channel_1bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
-{
-	const unsigned char *buf;
-	const float *fp0, *fp1;
-	int o, i;
-	int nblank = 0;
-
-	buf = ms->payload;
-	i = ms->readposition;
-
-	for(o = 0; o < nsamp; o++)
-	{
-		if(i >= ms->blankzoneendvalid[0])
-		{
-			fp0 = fp1 = zeros;
-			nblank++;
+			memcpy(data[0]+o, zeros, 4*sizeof(float));
+			memcpy(data[1]+o, zeros, 4*sizeof(float));
+			++nblank;
 			i += 2;
 		}
 		else
 		{
-			fp0 = lut1bit[buf[i]];
-			i++;
-			fp1 = lut1bit[buf[i]];
-			i++;
+			memcpy(data[0]+o, lut2bit[buf[i++]], 4*sizeof(float));
+			memcpy(data[1]+o, lut2bit[buf[i++]], 4*sizeof(float));
 		}
-
-		data[0][o] = fp0[0];
-		data[1][o] = fp0[1];
-		data[2][o] = fp0[2];
-		data[3][o] = fp0[3];
-		data[4][o] = fp0[4];
-		data[5][o] = fp0[5];
-		data[6][o] = fp0[6];
-		data[7][o] = fp0[7];
-		data[8][o] = fp1[0];
-		data[9][o] = fp1[1];
-		data[10][o] = fp1[2];
-		data[11][o] = fp1[3];
-		data[12][o] = fp1[4];
-		data[13][o] = fp1[5];
-		data[14][o] = fp1[6];
-		data[15][o] = fp1[7];
-
-		if(i >= ms->databytes)
-		{
-			if(mark5_stream_next_frame(ms) < 0)
-			{
-				return -1;
-			}
-			buf = ms->payload;
-			i = 0;
-		}
-	}
-
-	ms->readposition = i;
-
-	return nsamp - nblank;
-}
-
-static int vdif_decode_32channel_1bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
-{
-	const unsigned char *buf;
-	const float *fp0, *fp1, *fp2, *fp3;
-	int o, i;
-	int nblank = 0;
-
-	buf = ms->payload;
-	i = ms->readposition;
-
-	for(o = 0; o < nsamp; o++)
-	{
-		if(i >= ms->blankzoneendvalid[0])
-		{
-			fp0 = fp1 = fp2 = fp3 = zeros;
-			nblank++;
-			i += 4;
-		}
-		else
-		{
-			fp0 = lut1bit[buf[i]];
-			i++;
-			fp1 = lut1bit[buf[i]];
-			i++;
-			fp2 = lut1bit[buf[i]];
-			i++;
-			fp3 = lut1bit[buf[i]];
-			i++;
-		}
-
-		data[0][o] = fp0[0];
-		data[1][o] = fp0[1];
-		data[2][o] = fp0[2];
-		data[3][o] = fp0[3];
-		data[4][o] = fp0[4];
-		data[5][o] = fp0[5];
-		data[6][o] = fp0[6];
-		data[7][o] = fp0[7];
-		data[8][o] = fp1[0];
-		data[9][o] = fp1[1];
-		data[10][o] = fp1[2];
-		data[11][o] = fp1[3];
-		data[12][o] = fp1[4];
-		data[13][o] = fp1[5];
-		data[14][o] = fp1[6];
-		data[15][o] = fp1[7];
-		data[16][o] = fp2[0];
-		data[17][o] = fp2[1];
-		data[18][o] = fp2[2];
-		data[19][o] = fp2[3];
-		data[20][o] = fp2[4];
-		data[21][o] = fp2[5];
-		data[22][o] = fp2[6];
-		data[23][o] = fp2[7];
-		data[24][o] = fp3[0];
-		data[25][o] = fp3[1];
-		data[26][o] = fp3[2];
-		data[27][o] = fp3[3];
-		data[28][o] = fp3[4];
-		data[29][o] = fp3[5];
-		data[30][o] = fp3[6];
-		data[31][o] = fp3[7];
-
-		if(i >= ms->databytes)
-		{
-			if(mark5_stream_next_frame(ms) < 0)
-			{
-				return -1;
-			}
-			buf = ms->payload;
-			i = 0;
-		}
-	}
-
-	ms->readposition = i;
-
-	return nsamp - nblank;
-}
-
-static int vdif_decode_1channel_2bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
-{
-	const unsigned char *buf;
-	const float *fp;
-	int o, i;
-	int nblank = 0;
-
-	buf = ms->payload;
-	i = ms->readposition;
-
-	for(o = 0; o < nsamp; o++)
-	{
-		if(i >= ms->blankzoneendvalid[0])
-		{
-			fp = zeros;
-			nblank++;
-		}
-		else
-		{
-			fp = lut2bit[buf[i]];
-		}
-
-		i++;
-
-		data[0][o] = fp[0];
-		o++;
-		data[0][o] = fp[1];
-		o++;
-		data[0][o] = fp[2];
-		o++;
-		data[0][o] = fp[3];
 
 		if(i >= ms->databytes)
 		{
@@ -609,474 +466,33 @@ static int vdif_decode_1channel_2bit_decimation1(struct mark5_stream *ms, int ns
 	return nsamp - 4*nblank;
 }
 
-static int vdif_decode_2channel_2bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
+static int vdifb_decode_4channel_2bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
 {
 	const unsigned char *buf;
-	const float *fp;
 	int o, i;
 	int nblank = 0;
 
 	buf = ms->payload;
 	i = ms->readposition;
 
-	for(o = 0; o < nsamp; o++)
+	for(o = 0; o < nsamp; o += 4)
 	{
 		if(i >= ms->blankzoneendvalid[0])
 		{
-			fp = zeros;
-			nblank++;
-		}
-		else
-		{
-			fp = lut2bit[buf[i]];
-		}
-
-		i++;
-
-		data[0][o] = fp[0];
-		data[1][o] = fp[1];
-		o++;
-		data[0][o] = fp[2];
-		data[1][o] = fp[3];
-
-		if(i >= ms->databytes)
-		{
-			if(mark5_stream_next_frame(ms) < 0)
-			{
-				return -1;
-			}
-			buf = ms->payload;
-			i = 0;
-		}
-	}
-
-	ms->readposition = i;
-
-	return nsamp - 2*nblank;
-}
-
-static int vdif_decode_4channel_2bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
-{
-	const unsigned char *buf;
-	const float *fp;
-	int o, i;
-	int nblank = 0;
-
-	buf = ms->payload;
-	i = ms->readposition;
-
-	for(o = 0; o < nsamp; o++)
-	{
-		if(i >= ms->blankzoneendvalid[0])
-		{
-			fp = zeros;
-			nblank++;
-		}
-		else
-		{
-			fp = lut2bit[buf[i]];
-		}
-
-		i++;
-
-		data[0][o] = fp[0];
-		data[1][o] = fp[1];
-		data[2][o] = fp[2];
-		data[3][o] = fp[3];
-
-		if(i >= ms->databytes)
-		{
-			if(mark5_stream_next_frame(ms) < 0)
-			{
-				return -1;
-			}
-			buf = ms->payload;
-			i = 0;
-		}
-	}
-
-	ms->readposition = i;
-
-	return nsamp - nblank;
-}
-
-static int vdif_decode_8channel_2bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
-{
-	const unsigned char *buf;
-	const float *fp0, *fp1;
-	int o, i;
-	int nblank = 0;
-
-	buf = ms->payload;
-	i = ms->readposition;
-
-	for(o = 0; o < nsamp; o++)
-	{
-		if(i >= ms->blankzoneendvalid[0])
-		{
-			fp0 = fp1 = zeros;
-			nblank++;
-			i+=2;
-		}
-		else
-		{
-			fp0 = lut2bit[buf[i]];
-			i++;
-			fp1 = lut2bit[buf[i]];
-			i++;
-		}
-
-
-		data[0][o] = fp0[0];
-		data[1][o] = fp0[1];
-		data[2][o] = fp0[2];
-		data[3][o] = fp0[3];
-		data[4][o] = fp1[0];
-		data[5][o] = fp1[1];
-		data[6][o] = fp1[2];
-		data[7][o] = fp1[3];
-
-		if(i >= ms->databytes)
-		{
-			if(mark5_stream_next_frame(ms) < 0)
-			{
-				return -1;
-			}
-			buf = ms->payload;
-			i = 0;
-		}
-	}
-
-	ms->readposition = i;
-
-	return nsamp - nblank;
-}
-
-static int vdif_decode_16channel_2bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
-{
-	const unsigned char *buf;
-	const float *fp0, *fp1, *fp2, *fp3;
-	int o, i;
-	int nblank = 0;
-
-	buf = ms->payload;
-	i = ms->readposition;
-
-	for(o = 0; o < nsamp; o++)
-	{
-		if(i >= ms->blankzoneendvalid[0])
-		{
-			fp0 = fp1 = fp2 = fp3 = zeros;
-			nblank++;
-			i+=4;
-		}
-		else
-		{
-			fp0 = lut2bit[buf[i]];
-			i++;
-			fp1 = lut2bit[buf[i]];
-			i++;
-			fp2 = lut2bit[buf[i]];
-			i++;
-			fp3 = lut2bit[buf[i]];
-			i++;
-		}
-
-
-		data[0][o] = fp0[0];
-		data[1][o] = fp0[1];
-		data[2][o] = fp0[2];
-		data[3][o] = fp0[3];
-		data[4][o] = fp1[0];
-		data[5][o] = fp1[1];
-		data[6][o] = fp1[2];
-		data[7][o] = fp1[3];
-		data[8][o] = fp2[0];
-		data[9][o] = fp2[1];
-		data[10][o] = fp2[2];
-		data[11][o] = fp2[3];
-		data[12][o] = fp3[0];
-		data[13][o] = fp3[1];
-		data[14][o] = fp3[2];
-		data[15][o] = fp3[3];
-
-		if(i >= ms->databytes)
-		{
-			if(mark5_stream_next_frame(ms) < 0)
-			{
-				return -1;
-			}
-			buf = ms->payload;
-			i = 0;
-		}
-	}
-
-	ms->readposition = i;
-
-	return nsamp - nblank;
-}
-
-static int vdif_decode_32channel_2bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
-{
-	const unsigned char *buf;
-	const float *fp0, *fp1, *fp2, *fp3, *fp4, *fp5, *fp6, *fp7;
-	int o, i;
-	int nblank = 0;
-
-	buf = ms->payload;
-	i = ms->readposition;
-
-	for(o = 0; o < nsamp; o++)
-	{
-		if(i >= ms->blankzoneendvalid[0])
-		{
-			fp0 = fp1 = fp2 = fp3 = fp4 = fp5 = fp6 = fp7 = zeros;
-			nblank++;
-			i+=8;
-		}
-		else
-		{
-			fp0 = lut2bit[buf[i]];
-			i++;
-			fp1 = lut2bit[buf[i]];
-			i++;
-			fp2 = lut2bit[buf[i]];
-			i++;
-			fp3 = lut2bit[buf[i]];
-			i++;
-			fp4 = lut2bit[buf[i]];
-			i++;
-			fp5 = lut2bit[buf[i]];
-			i++;
-			fp6 = lut2bit[buf[i]];
-			i++;
-			fp7 = lut2bit[buf[i]];
-			i++;
-		}
-
-
-		data[0][o] = fp0[0];
-		data[1][o] = fp0[1];
-		data[2][o] = fp0[2];
-		data[3][o] = fp0[3];
-		data[4][o] = fp1[0];
-		data[5][o] = fp1[1];
-		data[6][o] = fp1[2];
-		data[7][o] = fp1[3];
-		data[8][o] = fp2[0];
-		data[9][o] = fp2[1];
-		data[10][o] = fp2[2];
-		data[11][o] = fp2[3];
-		data[12][o] = fp3[0];
-		data[13][o] = fp3[1];
-		data[14][o] = fp3[2];
-		data[15][o] = fp3[3];
-		data[16][o] = fp4[0];
-		data[17][o] = fp4[1];
-		data[18][o] = fp4[2];
-		data[19][o] = fp4[3];
-		data[20][o] = fp5[0];
-		data[21][o] = fp5[1];
-		data[22][o] = fp5[2];
-		data[23][o] = fp5[3];
-		data[24][o] = fp6[0];
-		data[25][o] = fp6[1];
-		data[26][o] = fp6[2];
-		data[27][o] = fp6[3];
-		data[28][o] = fp7[0];
-		data[29][o] = fp7[1];
-		data[30][o] = fp7[2];
-		data[31][o] = fp7[3];
-
-		if(i >= ms->databytes)
-		{
-			if(mark5_stream_next_frame(ms) < 0)
-			{
-				return -1;
-			}
-			buf = ms->payload;
-			i = 0;
-		}
-	}
-
-	ms->readposition = i;
-
-	return nsamp - nblank;
-}
-
-
-static int vdif_decode_1channel_4bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
-{
-	const unsigned char *buf;
-	const float *fp;
-	int o, i;
-	int nblank = 0;
-
-	buf = ms->payload;
-	i = ms->readposition;
-
-	for(o = 0; o < nsamp; o++)
-	{
-		if(i >= ms->blankzoneendvalid[0])
-		{
-			fp = zeros;
-			nblank++;
-		}
-		else
-		{
-			fp = lut4bit[buf[i]];
-		}
-
-		i++;
-
-		data[0][o] = fp[0];
-		o++;
-		data[0][o] = fp[1];
-
-		if(i >= ms->databytes)
-		{
-			if(mark5_stream_next_frame(ms) < 0)
-			{
-				return -1;
-			}
-			buf = ms->payload;
-			i = 0;
-		}
-	}
-
-	ms->readposition = i;
-
-	return nsamp - 2*nblank;
-}
-
-static int vdif_decode_2channel_4bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
-{
-	const unsigned char *buf;
-	const float *fp;
-	int o, i;
-	int nblank = 0;
-
-	buf = ms->payload;
-	i = ms->readposition;
-
-	for(o = 0; o < nsamp; o++)
-	{
-		if(i >= ms->blankzoneendvalid[0])
-		{
-			fp = zeros;
-			nblank++;
-		}
-		else
-		{
-			fp = lut4bit[buf[i]];
-		}
-
-		i++;
-
-		data[0][o] = fp[0];
-		data[1][o] = fp[1];
-
-		if(i >= ms->databytes)
-		{
-			if(mark5_stream_next_frame(ms) < 0)
-			{
-				return -1;
-			}
-			buf = ms->payload;
-			i = 0;
-		}
-	}
-
-	ms->readposition = i;
-
-	return nsamp - nblank;
-}
-
-static int vdif_decode_4channel_4bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
-{
-	const unsigned char *buf;
-	const float *fp0, *fp1;
-	int o, i;
-	int nblank = 0;
-
-	buf = ms->payload;
-	i = ms->readposition;
-
-	for(o = 0; o < nsamp; o++)
-	{
-		if(i >= ms->blankzoneendvalid[0])
-		{
-			fp0 = fp1 = zeros;
-			nblank++;
-			i += 2;
-		}
-		else
-		{
-			fp0 = lut4bit[buf[i]];
-			i++;
-			fp1 = lut4bit[buf[i]];
-			i++;
-		}
-
-		data[0][o] = fp0[0];
-		data[1][o] = fp0[1];
-		data[2][o] = fp1[0];
-		data[3][o] = fp1[1];
-
-		if(i >= ms->databytes)
-		{
-			if(mark5_stream_next_frame(ms) < 0)
-			{
-				return -1;
-			}
-			buf = ms->payload;
-			i = 0;
-		}
-	}
-
-	ms->readposition = i;
-
-	return nsamp - nblank;
-}
-
-static int vdif_decode_8channel_4bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
-{
-	const unsigned char *buf;
-	const float *fp0, *fp1, *fp2, *fp3;
-	int o, i;
-	int nblank = 0;
-
-	buf = ms->payload;
-	i = ms->readposition;
-
-	for(o = 0; o < nsamp; o++)
-	{
-		if(i >= ms->blankzoneendvalid[0])
-		{
-			fp0 = fp1 = fp2 = fp3 = zeros;
-			nblank++;
+			memcpy(data[0]+o, zeros, 4*sizeof(float));
+			memcpy(data[1]+o, zeros, 4*sizeof(float));
+			memcpy(data[2]+o, zeros, 4*sizeof(float));
+			memcpy(data[3]+o, zeros, 4*sizeof(float));
+			++nblank;
 			i += 4;
 		}
 		else
 		{
-			fp0 = lut4bit[buf[i]];
-			i++;
-			fp1 = lut4bit[buf[i]];
-			i++;
-			fp2 = lut4bit[buf[i]];
-			i++;
-			fp3 = lut4bit[buf[i]];
-			i++;
+			memcpy(data[0]+o, lut2bit[buf[i++]], 4*sizeof(float));
+			memcpy(data[1]+o, lut2bit[buf[i++]], 4*sizeof(float));
+			memcpy(data[2]+o, lut2bit[buf[i++]], 4*sizeof(float));
+			memcpy(data[3]+o, lut2bit[buf[i++]], 4*sizeof(float));
 		}
-
-		data[0][o] = fp0[0];
-		data[1][o] = fp0[1];
-		data[2][o] = fp1[0];
-		data[3][o] = fp1[1];
-		data[4][o] = fp2[0];
-		data[5][o] = fp2[1];
-		data[6][o] = fp3[0];
-		data[7][o] = fp3[1];
 
 		if(i >= ms->databytes)
 		{
@@ -1091,10 +507,229 @@ static int vdif_decode_8channel_4bit_decimation1(struct mark5_stream *ms, int ns
 
 	ms->readposition = i;
 
-	return nsamp - nblank;
+	return nsamp - 4*nblank;
 }
 
-static int vdif_decode_1channel_8bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
+static int vdifb_decode_Nchannel_2bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
+{
+	const unsigned char *buf;
+	int o, i, c;
+	int nblank = 0;
+
+	buf = ms->payload;
+	i = ms->readposition;
+
+	for(o = 0; o < nsamp; o += 4)
+	{
+		if(i >= ms->blankzoneendvalid[0])
+		{
+			for(c = 0; c < ms->nchan; ++c)
+			{
+				memcpy(data[c]+o, zeros, 4*sizeof(float));
+			}
+			++nblank;
+			i += ms->nchan;
+		}
+		else
+		{
+			for(c = 0; c < ms->nchan; ++c)
+			{
+				memcpy(data[c]+o, lut2bit[buf[i++]], 4*sizeof(float));
+			}
+		}
+
+		if(i >= ms->databytes)
+		{
+			if(mark5_stream_next_frame(ms) < 0)
+			{
+				return -1;
+			}
+			buf = ms->payload;
+			i = 0;
+		}
+	}
+
+	ms->readposition = i;
+
+	return nsamp - 4*nblank;
+}
+
+
+static int vdifb_decode_1channel_4bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
+{
+	const unsigned char *buf;
+	int o, i;
+	int nblank = 0;
+
+	buf = ms->payload;
+	i = ms->readposition;
+
+	for(o = 0; o < nsamp; o += 2)
+	{
+		if(i >= ms->blankzoneendvalid[0])
+		{
+			memcpy(data[0]+o, zeros, 2*sizeof(float));
+			++nblank;
+			++i;
+		}
+		else
+		{
+			memcpy(data[0]+o, lut4bit[buf[i++]], 2*sizeof(float));
+		}
+
+		if(i >= ms->databytes)
+		{
+			if(mark5_stream_next_frame(ms) < 0)
+			{
+				return -1;
+			}
+			buf = ms->payload;
+			i = 0;
+		}
+	}
+
+	ms->readposition = i;
+
+	return nsamp - 2*nblank;
+}
+
+static int vdifb_decode_2channel_4bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
+{
+	const unsigned char *buf;
+	int o, i;
+	int nblank = 0;
+
+	buf = ms->payload;
+	i = ms->readposition;
+
+	for(o = 0; o < nsamp; o += 2)
+	{
+		if(i >= ms->blankzoneendvalid[0])
+		{
+			memcpy(data[0]+o, zeros, 2*sizeof(float));
+			memcpy(data[1]+o, zeros, 2*sizeof(float));
+			++nblank;
+			i += 2;
+		}
+		else
+		{
+			memcpy(data[0]+o, lut4bit[buf[i++]], 2*sizeof(float));
+			memcpy(data[1]+o, lut4bit[buf[i++]], 2*sizeof(float));
+		}
+
+		if(i >= ms->databytes)
+		{
+			if(mark5_stream_next_frame(ms) < 0)
+			{
+				return -1;
+			}
+			buf = ms->payload;
+			i = 0;
+		}
+	}
+
+	ms->readposition = i;
+
+	return nsamp - 2*nblank;
+}
+
+static int vdifb_decode_4channel_4bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
+{
+	const unsigned char *buf;
+	int o, i;
+	int nblank = 0;
+
+	buf = ms->payload;
+	i = ms->readposition;
+
+	for(o = 0; o < nsamp; o += 2)
+	{
+		if(i >= ms->blankzoneendvalid[0])
+		{
+			memcpy(data[0]+o, zeros, 2*sizeof(float));
+			memcpy(data[1]+o, zeros, 2*sizeof(float));
+			memcpy(data[2]+o, zeros, 2*sizeof(float));
+			memcpy(data[3]+o, zeros, 2*sizeof(float));
+			++nblank;
+			i += 4;
+		}
+		else
+		{
+			memcpy(data[0]+o, lut4bit[buf[i++]], 2*sizeof(float));
+			memcpy(data[1]+o, lut4bit[buf[i++]], 2*sizeof(float));
+			memcpy(data[2]+o, lut4bit[buf[i++]], 2*sizeof(float));
+			memcpy(data[3]+o, lut4bit[buf[i++]], 2*sizeof(float));
+		}
+
+		if(i >= ms->databytes)
+		{
+			if(mark5_stream_next_frame(ms) < 0)
+			{
+				return -1;
+			}
+			buf = ms->payload;
+			i = 0;
+		}
+	}
+
+	ms->readposition = i;
+
+	return nsamp - 2*nblank;
+}
+
+static int vdifb_decode_8channel_4bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
+{
+	const unsigned char *buf;
+	int o, i;
+	int nblank = 0;
+
+	buf = ms->payload;
+	i = ms->readposition;
+
+	for(o = 0; o < nsamp; o += 2)
+	{
+		if(i >= ms->blankzoneendvalid[0])
+		{
+			memcpy(data[0]+o, zeros, 2*sizeof(float));
+			memcpy(data[1]+o, zeros, 2*sizeof(float));
+			memcpy(data[2]+o, zeros, 2*sizeof(float));
+			memcpy(data[3]+o, zeros, 2*sizeof(float));
+			memcpy(data[4]+o, zeros, 2*sizeof(float));
+			memcpy(data[5]+o, zeros, 2*sizeof(float));
+			memcpy(data[6]+o, zeros, 2*sizeof(float));
+			memcpy(data[7]+o, zeros, 2*sizeof(float));
+			++nblank;
+			i += 8;
+		}
+		else
+		{
+			memcpy(data[0]+o, lut4bit[buf[i++]], 2*sizeof(float));
+			memcpy(data[1]+o, lut4bit[buf[i++]], 2*sizeof(float));
+			memcpy(data[2]+o, lut4bit[buf[i++]], 2*sizeof(float));
+			memcpy(data[3]+o, lut4bit[buf[i++]], 2*sizeof(float));
+			memcpy(data[4]+o, lut4bit[buf[i++]], 2*sizeof(float));
+			memcpy(data[5]+o, lut4bit[buf[i++]], 2*sizeof(float));
+			memcpy(data[6]+o, lut4bit[buf[i++]], 2*sizeof(float));
+			memcpy(data[7]+o, lut4bit[buf[i++]], 2*sizeof(float));
+		}
+
+		if(i >= ms->databytes)
+		{
+			if(mark5_stream_next_frame(ms) < 0)
+			{
+				return -1;
+			}
+			buf = ms->payload;
+			i = 0;
+		}
+	}
+
+	ms->readposition = i;
+
+	return nsamp - 2*nblank;
+}
+
+static int vdifb_decode_1channel_8bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
 {
 	const unsigned char *buf;
 	const float *fp;
@@ -1136,7 +771,7 @@ static int vdif_decode_1channel_8bit_decimation1(struct mark5_stream *ms, int ns
 	return nsamp - nblank;
 }
 
-static int vdif_decode_2channel_8bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
+static int vdifb_decode_2channel_8bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
 {
 	const unsigned char *buf;
 	const float *fp0, *fp1;
@@ -1151,14 +786,12 @@ static int vdif_decode_2channel_8bit_decimation1(struct mark5_stream *ms, int ns
 		if(i >= ms->blankzoneendvalid[0])
 		{
 			fp0 = fp1 = zeros;
-			nblank++;
+			++nblank;
 		}
 		else
 		{
-			fp0 = &lut8bit[buf[i]];
-			i++;
-			fp1 = &lut8bit[buf[i]];
-			i++;
+			fp0 = &lut8bit[buf[i++]];
+			fp1 = &lut8bit[buf[i++]];
 		}
 
 		data[0][o] = fp0[0];
@@ -1180,7 +813,7 @@ static int vdif_decode_2channel_8bit_decimation1(struct mark5_stream *ms, int ns
 	return nsamp - nblank;
 }
 
-static int vdif_decode_4channel_8bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
+static int vdifb_decode_4channel_8bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
 {
 	const unsigned char *buf;
 	const float *fp0, *fp1, *fp2, *fp3;
@@ -1195,18 +828,14 @@ static int vdif_decode_4channel_8bit_decimation1(struct mark5_stream *ms, int ns
 		if(i >= ms->blankzoneendvalid[0])
 		{
 			fp0 = fp1 = fp2 = fp3 = zeros;
-			nblank++;
+			++nblank;
 		}
 		else
 		{
-			fp0 = &lut8bit[buf[i]];
-			i++;
-			fp1 = &lut8bit[buf[i]];
-			i++;
-			fp2 = &lut8bit[buf[i]];
-			i++;
-			fp3 = &lut8bit[buf[i]];
-			i++;
+			fp0 = &lut8bit[buf[i++]];
+			fp1 = &lut8bit[buf[i++]];
+			fp2 = &lut8bit[buf[i++]];
+			fp3 = &lut8bit[buf[i++]];
 		}
 
 		data[0][o] = fp0[0];
@@ -1231,6 +860,8 @@ static int vdif_decode_4channel_8bit_decimation1(struct mark5_stream *ms, int ns
 }
 
 // Complex
+
+#if 0
 
 static int vdif_complex_decode_1channel_1bit_decimation1(struct mark5_stream *ms, int nsamp, float complex **data)
 {
@@ -1591,14 +1222,12 @@ static int vdif_complex_decode_4channel_2bit_decimation1(struct mark5_stream *ms
 		{
 			fcp0 = fcp1 = complex_zeros;
 			nblank++;
-			i+=2;
+			i += 2;
 		}
 		else
 		{
-			fcp0 = complex_lut2bit[buf[i]];
-			i++;
-			fcp1 = complex_lut2bit[buf[i]];
-			i++;
+			fcp0 = complex_lut2bit[buf[i++]];
+			fcp1 = complex_lut2bit[buf[i++]];
 		}
 
 
@@ -1643,14 +1272,10 @@ static int vdif_complex_decode_8channel_2bit_decimation1(struct mark5_stream *ms
 		}
 		else
 		{
-			fcp0 = complex_lut2bit[buf[i]];
-			i++;
-			fcp1 = complex_lut2bit[buf[i]];
-			i++;
-			fcp2 = complex_lut2bit[buf[i]];
-			i++;
-			fcp3 = complex_lut2bit[buf[i]];
-			i++;
+			fcp0 = complex_lut2bit[buf[i++]];
+			fcp1 = complex_lut2bit[buf[i++]];
+			fcp2 = complex_lut2bit[buf[i++]];
+			fcp3 = complex_lut2bit[buf[i++]];
 		}
 
 
@@ -1678,7 +1303,7 @@ static int vdif_complex_decode_8channel_2bit_decimation1(struct mark5_stream *ms
 
 	return nsamp - nblank;
 }
-
+//             new vdif mode added by rjc  2012.10.25
 static int vdif_complex_decode_16channel_2bit_decimation1(struct mark5_stream *ms, int nsamp, float complex **data)
 {
 	const unsigned char *buf;
@@ -1750,109 +1375,6 @@ static int vdif_complex_decode_16channel_2bit_decimation1(struct mark5_stream *m
 
 	return nsamp - nblank;
 }
-
-static int vdif_complex_decode_32channel_2bit_decimation1(struct mark5_stream *ms, int nsamp, float complex **data)
-{
-	const unsigned char *buf;
-	const float complex *fcp[16];
-	int o, i, j;
-	int nblank = 0;
-
-	buf = ms->payload;
-	i = ms->readposition;
-
-	for(o = 0; o < nsamp; o++)
-	{
-		if(i >= ms->blankzoneendvalid[0])
-		{
-  		        for (j=0; j<16; j++) fcp[j] = complex_zeros;
-		        nblank++;
-		        i+=16;
-		}
-		else
-		{
-		  for (j=0; j<16; j++) 
-		  {
-		        fcp[j] = complex_lut2bit[buf[i]]; 
-			i++;
-		  }
-		}
-
-		int k=0;
-		for (j=0; j<16; j++) 
-		{
-		        data[k++][o] = fcp[j][0];
-			data[k++][o] = fcp[j][1];
-		}
-
-
-		if(i >= ms->databytes)
-		{
-			if(mark5_stream_next_frame(ms) < 0)
-			{
-				return -1;
-			}
-			buf = ms->payload;
-			i = 0;
-		}
-	}
-
-	ms->readposition = i;
-
-	return nsamp - nblank;
-}
-
-static int vdif_complex_decode_64channel_2bit_decimation1(struct mark5_stream *ms, int nsamp, float complex **data)
-{
-	const unsigned char *buf;
-	const float complex *fcp[32];
-	int o, i, j;
-	int nblank = 0;
-
-	buf = ms->payload;
-	i = ms->readposition;
-
-	for(o = 0; o < nsamp; o++)
-	{
-		if(i >= ms->blankzoneendvalid[0])
-		{
-  		        for (j=0; j<32; j++) fcp[j] = complex_zeros;
-		        nblank++;
-		        i+=16;
-		}
-		else
-		{
-		  for (j=0; j<32; j++) 
-		  {
-		        fcp[j] = complex_lut2bit[buf[i]]; 
-			i++;
-		  }
-		}
-
-		int k=0;
-		for (j=0; j<32; j++) 
-		{
-		        data[k++][o] = fcp[j][0];
-			data[k++][o] = fcp[j][1];
-		}
-
-
-		if(i >= ms->databytes)
-		{
-			if(mark5_stream_next_frame(ms) < 0)
-			{
-				return -1;
-			}
-			buf = ms->payload;
-			i = 0;
-		}
-	}
-
-	ms->readposition = i;
-
-	return nsamp - nblank;
-}
-
 
 static int vdif_complex_decode_1channel_4bit_decimation1(struct mark5_stream *ms, int nsamp, float complex **data)
 {
@@ -2328,35 +1850,31 @@ static int vdif_complex_decode_16channel_16bit_decimation1(struct mark5_stream *
 
 /* Other decoders go here */
 
+#endif
+
 /************************ 2-bit state counters *********************/
 /* Note: these only count high vs. low states, not full state counts */
 
-static int vdif_count_1channel_2bit_decimation1(struct mark5_stream *ms, int nsamp, unsigned int *highstates)
+static int vdifb_count_1channel_2bit_decimation1(struct mark5_stream *ms, int nsamp, unsigned int *highstates)
 {
 	const unsigned char *buf;
-	const unsigned char *fp;
 	int o, i;
 	int nblank = 0;
 
 	buf = ms->payload;
 	i = ms->readposition;
 
-	for(o = 0; o < nsamp; o+=4)
+	for(o = 0; o < nsamp; o += 4)
 	{
 		if(i >= ms->blankzoneendvalid[0])
 		{
-			nblank++;
+			++nblank;
+			++i;
 		}
 		else
 		{
-			fp = countlut2bit[buf[i]];
-			highstates[0] += fp[0];
-			highstates[0] += fp[1];
-			highstates[0] += fp[2];
-			highstates[0] += fp[3];
+			highstates[0] += countlut2bit[buf[i++]];
 		}
-
-		i++;
 
 		if(i >= ms->databytes)
 		{
@@ -2374,124 +1892,26 @@ static int vdif_count_1channel_2bit_decimation1(struct mark5_stream *ms, int nsa
 	return nsamp - 4*nblank;
 }
 
-static int vdif_count_2channel_2bit_decimation1(struct mark5_stream *ms, int nsamp, unsigned int *highstates)
+static int vdifb_count_2channel_2bit_decimation1(struct mark5_stream *ms, int nsamp, unsigned int *highstates)
 {
 	const unsigned char *buf;
-	const unsigned char *fp;
 	int o, i;
 	int nblank = 0;
 
 	buf = ms->payload;
 	i = ms->readposition;
 
-	for(o = 0; o < nsamp; o+=2)
+	for(o = 0; o < nsamp; o += 4)
 	{
 		if(i >= ms->blankzoneendvalid[0])
 		{
-			nblank++;
+			++nblank;
+			i += 4;
 		}
 		else
 		{
-			fp = countlut2bit[buf[i]];
-			highstates[0] += fp[0];
-			highstates[1] += fp[1];
-			highstates[0] += fp[2];
-			highstates[1] += fp[3];
-		}
-
-		i++;
-
-		if(i >= ms->databytes)
-		{
-			if(mark5_stream_next_frame(ms) < 0)
-			{
-				return -1;
-			}
-			buf = ms->payload;
-			i = 0;
-		}
-	}
-
-	ms->readposition = i;
-
-	return nsamp - 2*nblank;
-}
-
-static int vdif_count_4channel_2bit_decimation1(struct mark5_stream *ms, int nsamp, unsigned int *highstates)
-{
-	const unsigned char *buf;
-	const unsigned char *fp;
-	int o, i;
-	int nblank = 0;
-
-	buf = ms->payload;
-	i = ms->readposition;
-
-	for(o = 0; o < nsamp; o++)
-	{
-		if(i >= ms->blankzoneendvalid[0])
-		{
-			nblank++;
-		}
-		else
-		{
-			fp = countlut2bit[buf[i]];
-			highstates[0] += fp[0];
-			highstates[1] += fp[1];
-			highstates[2] += fp[2];
-			highstates[3] += fp[3];
-		}
-
-		i++;
-
-		if(i >= ms->databytes)
-		{
-			if(mark5_stream_next_frame(ms) < 0)
-			{
-				return -1;
-			}
-			buf = ms->payload;
-			i = 0;
-		}
-	}
-
-	ms->readposition = i;
-
-	return nsamp - nblank;
-}
-
-static int vdif_count_8channel_2bit_decimation1(struct mark5_stream *ms, int nsamp, unsigned int *highstates)
-{
-	const unsigned char *buf;
-	const unsigned char *fp0, *fp1;
-	int o, i;
-	int nblank = 0;
-
-	buf = ms->payload;
-	i = ms->readposition;
-
-	for(o = 0; o < nsamp; o++)
-	{
-		if(i >= ms->blankzoneendvalid[0])
-		{
-			nblank++;
-			i+=2;
-		}
-		else
-		{
-			fp0 = countlut2bit[buf[i]];
-			i++;
-			fp1 = countlut2bit[buf[i]];
-			i++;
-
-			highstates[0] += fp0[0];
-			highstates[1] += fp0[1];
-			highstates[2] += fp0[2];
-			highstates[3] += fp0[3];
-			highstates[4] += fp1[0];
-			highstates[5] += fp1[1];
-			highstates[6] += fp1[2];
-			highstates[7] += fp1[3];
+			highstates[0] += countlut2bit[buf[i++]];
+			highstates[1] += countlut2bit[buf[i++]];
 		}
 
 		if(i >= ms->databytes)
@@ -2507,53 +1927,31 @@ static int vdif_count_8channel_2bit_decimation1(struct mark5_stream *ms, int nsa
 
 	ms->readposition = i;
 
-	return nsamp - nblank;
+	return nsamp - 4*nblank;
 }
 
-static int vdif_count_16channel_2bit_decimation1(struct mark5_stream *ms, int nsamp, unsigned int *highstates)
+static int vdifb_count_4channel_2bit_decimation1(struct mark5_stream *ms, int nsamp, unsigned int *highstates)
 {
 	const unsigned char *buf;
-	const unsigned char *fp0, *fp1, *fp2, *fp3;
 	int o, i;
 	int nblank = 0;
 
 	buf = ms->payload;
 	i = ms->readposition;
 
-	for(o = 0; o < nsamp; o++)
+	for(o = 0; o < nsamp; o += 4)
 	{
 		if(i >= ms->blankzoneendvalid[0])
 		{
-			nblank++;
-			i+=4;
+			++nblank;
+			i += 4;
 		}
 		else
 		{
-			fp0 = countlut2bit[buf[i]];
-			i++;
-			fp1 = countlut2bit[buf[i]];
-			i++;
-			fp2 = countlut2bit[buf[i]];
-			i++;
-			fp3 = countlut2bit[buf[i]];
-			i++;
-
-			highstates[0] += fp0[0];
-			highstates[1] += fp0[1];
-			highstates[2] += fp0[2];
-			highstates[3] += fp0[3];
-			highstates[4] += fp1[0];
-			highstates[5] += fp1[1];
-			highstates[6] += fp1[2];
-			highstates[7] += fp1[3];
-			highstates[8] += fp2[0];
-			highstates[9] += fp2[1];
-			highstates[10] += fp2[2];
-			highstates[11] += fp2[3];
-			highstates[12] += fp3[0];
-			highstates[13] += fp3[1];
-			highstates[14] += fp3[2];
-			highstates[15] += fp3[3];
+			highstates[0] += countlut2bit[buf[i++]];
+			highstates[1] += countlut2bit[buf[i++]];
+			highstates[2] += countlut2bit[buf[i++]];
+			highstates[3] += countlut2bit[buf[i++]];
 		}
 
 		if(i >= ms->databytes)
@@ -2569,78 +1967,31 @@ static int vdif_count_16channel_2bit_decimation1(struct mark5_stream *ms, int ns
 
 	ms->readposition = i;
 
-	return nsamp - nblank;
+	return nsamp - 4*nblank;
 }
 
-
-static int vdif_count_32channel_2bit_decimation1(struct mark5_stream *ms, int nsamp, unsigned int *highstates)
+static int vdifb_count_Nchannel_2bit_decimation1(struct mark5_stream *ms, int nsamp, unsigned int *highstates)
 {
 	const unsigned char *buf;
-	const unsigned char *fp0, *fp1, *fp2, *fp3, *fp4, *fp5, *fp6, *fp7;
-	int o, i;
+	int o, i, c;
 	int nblank = 0;
 
 	buf = ms->payload;
 	i = ms->readposition;
 
-	for(o = 0; o < nsamp; o++)
+	for(o = 0; o < nsamp; o += ms->nchan)
 	{
 		if(i >= ms->blankzoneendvalid[0])
 		{
-			nblank++;
-			i+=8;
+			++nblank;
+			i += ms->nchan;
 		}
 		else
 		{
-			fp0 = countlut2bit[buf[i]];
-			i++;
-			fp1 = countlut2bit[buf[i]];
-			i++;
-			fp2 = countlut2bit[buf[i]];
-			i++;
-			fp3 = countlut2bit[buf[i]];
-			i++;
-			fp4 = countlut2bit[buf[i]];
-			i++;
-			fp5 = countlut2bit[buf[i]];
-			i++;
-			fp6 = countlut2bit[buf[i]];
-			i++;
-			fp7 = countlut2bit[buf[i]];
-			i++;
-
-			highstates[0] += fp0[0];
-			highstates[1] += fp0[1];
-			highstates[2] += fp0[2];
-			highstates[3] += fp0[3];
-			highstates[4] += fp1[0];
-			highstates[5] += fp1[1];
-			highstates[6] += fp1[2];
-			highstates[7] += fp1[3];
-			highstates[8] += fp2[0];
-			highstates[9] += fp2[1];
-			highstates[10] += fp2[2];
-			highstates[11] += fp2[3];
-			highstates[12] += fp3[0];
-			highstates[13] += fp3[1];
-			highstates[14] += fp3[2];
-			highstates[15] += fp3[3];
-			highstates[16] += fp4[0];
-			highstates[17] += fp4[1];
-			highstates[18] += fp4[2];
-			highstates[19] += fp4[3];
-			highstates[20] += fp5[0];
-			highstates[21] += fp5[1];
-			highstates[22] += fp5[2];
-			highstates[23] += fp5[3];
-			highstates[24] += fp6[0];
-			highstates[25] += fp6[1];
-			highstates[26] += fp6[2];
-			highstates[27] += fp6[3];
-			highstates[28] += fp7[0];
-			highstates[29] += fp7[1];
-			highstates[30] += fp7[2];
-			highstates[31] += fp7[3];
+			for(c = 0; c < ms->nchan; ++c)
+			{
+				highstates[c] += countlut2bit[buf[i++]];
+			}
 		}
 
 		if(i >= ms->databytes)
@@ -2656,31 +2007,28 @@ static int vdif_count_32channel_2bit_decimation1(struct mark5_stream *ms, int ns
 
 	ms->readposition = i;
 
-	return nsamp - nblank;
+	return nsamp - 4*nblank;
 }
+
 
 /******************************************************************/
 
-static int mark5_format_vdif_make_formatname(struct mark5_stream *ms)
+static int mark5_format_vdifb_make_formatname(struct mark5_stream *ms)
 {
-	if(ms->format == MK5_FORMAT_VDIF)	/* True VDIF header, not legacy */
+	if(ms->format == MK5_FORMAT_VDIFB)	/* True VDIF header, not legacy */
 	{
 		if (ms->complex_decode) 
 		{
-			sprintf(ms->formatname, "VDIFC_%d-%d-%d-%d", ms->databytes, ms->Mbps, ms->nchan, ms->nbit);
+			sprintf(ms->formatname, "VDIFBC_%d-%d-%d-%d", ms->databytes, ms->Mbps, ms->nchan, ms->nbit);
 		}
 		else
 		{
-			sprintf(ms->formatname, "VDIF_%d-%d-%d-%d", ms->databytes, ms->Mbps, ms->nchan, ms->nbit);
+			sprintf(ms->formatname, "VDIFB_%d-%d-%d-%d", ms->databytes, ms->Mbps, ms->nchan, ms->nbit);
 		}
-	}
-	else if(ms->format == MK5_FORMAT_VDIFL)	/* Must be legacy mode, so add an L to VDIF name */
-	{
-		sprintf(ms->formatname, "VDIFL_%d-%d-%d-%d", ms->databytes, ms->Mbps, ms->nchan, ms->nbit);
 	}
 	else
 	{
-		sprintf(ms->formatname, "VDIF?");
+		sprintf(ms->formatname, "VDIFB?");
 		fprintf(m5stderr, "Warning: mark5_format_vdif_make_formatname: format not set\n");
 		
 		return -1;
@@ -2689,9 +2037,9 @@ static int mark5_format_vdif_make_formatname(struct mark5_stream *ms)
 	return 0;
 }
 
-static int mark5_format_vdif_init(struct mark5_stream *ms)
+static int mark5_format_vdifb_init(struct mark5_stream *ms)
 {
-	struct mark5_format_vdif *f;
+	struct mark5_format_vdifb *f;
 	unsigned int word2;
 	unsigned char *headerbytes, bitspersample;
 	int framensNum, framensDen, dataframelength;
@@ -2699,12 +2047,12 @@ static int mark5_format_vdif_init(struct mark5_stream *ms)
 
 	if(!ms)
 	{
-		fprintf(m5stderr, "mark5_format_vdif_init: ms = 0\n");
+		fprintf(m5stderr, "mark5_format_vdifb_init: ms = 0\n");
 
 		return -1;
 	}
 
-	f = (struct mark5_format_vdif *)(ms->formatdata);
+	f = (struct mark5_format_vdifb *)(ms->formatdata);
 
 	bitspersample = ms->nbit;
 	if(ms->complex_decode)
@@ -2718,7 +2066,7 @@ static int mark5_format_vdif_init(struct mark5_stream *ms)
 	ms->blanker = blanker_vdif;
 
 	/* FIXME: if nbit is not a power of 2, this formula breaks down! */
-	ms->samplegranularity = 8/(ms->nchan*bitspersample*ms->decimation);
+	ms->samplegranularity = 8/(bitspersample*ms->decimation);
 	if(ms->samplegranularity <= 0)
 	{
 		ms->samplegranularity = 1;
@@ -2732,7 +2080,6 @@ static int mark5_format_vdif_init(struct mark5_stream *ms)
         ms->framegranularity = 1;
         if(ms->Mbps > 0)
         {
-//		framensNum = 250*f->databytesperpacket*f->completesamplesperword*ms->nchan*bitspersample;
 		framensNum = ms->databytes*8*1000;     
 		framensDen = ms->Mbps;
 
@@ -2748,7 +2095,7 @@ static int mark5_format_vdif_init(struct mark5_stream *ms)
 
 		if(ms->framegranularity >= 128)
 		{
-			fprintf(m5stderr, "VDIF Warning: cannot calculate gframens %d/%d\n",
+			fprintf(m5stderr, "VDIFB Warning: cannot calculate gframens %d/%d\n",
 			framensNum, framensDen);
 			ms->framegranularity = 1;
 		}
@@ -2756,7 +2103,7 @@ static int mark5_format_vdif_init(struct mark5_stream *ms)
         }
         else
         {
-                fprintf(m5stderr, "Error: you must specify the data rate (Mbps) for a VDIF mode (was set to %d)!", ms->Mbps);
+                fprintf(m5stderr, "Error: you must specify the data rate (Mbps) for a VDIFB mode (was set to %d)!", ms->Mbps);
 
 		return -1;
         }
@@ -2783,16 +2130,9 @@ static int mark5_format_vdif_init(struct mark5_stream *ms)
 		
 		if(headerbytes[3] & 0x40)	/* Legacy bit */
 		{
-			if(f->frameheadersize == 0)
-			{
-				f->frameheadersize = 16;
-			}
-			else if(f->frameheadersize != 16)
-			{
-				fprintf(m5stderr, "VDIF Warning: Changing frameheadersize from %d to 16\n",
-					f->frameheadersize);
-				f->frameheadersize = 16;
-			}
+			fprintf(m5stderr, "VDIFB: legacy headers not supported.\n");
+
+			return -1;
 		}
 		else
 		{
@@ -2802,21 +2142,19 @@ static int mark5_format_vdif_init(struct mark5_stream *ms)
 			}
 			else if(f->frameheadersize != 32)
 			{
-				fprintf(m5stderr, "VDIF Warning: Changing frameheadersize from %d to 32\n",
-					f->frameheadersize);
+				fprintf(m5stderr, "VDIFB Warning: Changing frameheadersize from %d to 32\n", f->frameheadersize);
 				f->frameheadersize = 32;
 			}
 		}
 
 		dataframelength = (word2 & 0x00FFFFFF)*8;
-		//fprintf(stdout, "Dataframelength as derived from the VDIF header is %d bytes\n", dataframelength);
 		if(f->databytesperpacket == 0)
 		{
 			f->databytesperpacket = dataframelength - f->frameheadersize;
 		}
 		else if(f->databytesperpacket != dataframelength - f->frameheadersize)
 		{
-			fprintf(m5stderr, "VDIF Warning: Changing databytesperpacket from %d to %d\n",
+			fprintf(m5stderr, "VDIFB Warning: Changing databytesperpacket from %d to %d\n",
 				f->databytesperpacket, dataframelength - f->frameheadersize);
 			f->databytesperpacket = dataframelength - f->frameheadersize;
 		}
@@ -2837,24 +2175,20 @@ static int mark5_format_vdif_init(struct mark5_stream *ms)
 
 	if(f->frameheadersize == 32)
 	{
-		ms->format = MK5_FORMAT_VDIF;
-	}
-	else if(f->frameheadersize == 16)
-	{
-		ms->format = MK5_FORMAT_VDIFL;
+		ms->format = MK5_FORMAT_VDIFB;
 	}
 	else
 	{
-		fprintf(m5stderr, "Error: mark5_format_vdif_init: unsupported frameheadersize=%d\n", f->frameheadersize);
+		fprintf(m5stderr, "Error: mark5_format_vdifb_init: unsupported frameheadersize=%d\n", f->frameheadersize);
 		
 		return -1;
 	}
-	mark5_format_vdif_make_formatname(ms);
+	mark5_format_vdifb_make_formatname(ms);
 
 	return 0;
 }
 
-static int mark5_format_vdif_final(struct mark5_stream *ms)
+static int mark5_format_vdifb_final(struct mark5_stream *ms)
 {
 	if(!ms)
 	{
@@ -2870,7 +2204,7 @@ static int mark5_format_vdif_final(struct mark5_stream *ms)
 	return 0;
 }
 
-static int mark5_format_vdif_validate(const struct mark5_stream *ms)
+static int mark5_format_vdifb_validate(const struct mark5_stream *ms)
 {
 	const unsigned int *header;
 
@@ -2880,7 +2214,7 @@ static int mark5_format_vdif_validate(const struct mark5_stream *ms)
 		double ns_d;
 		long long ns_t;
 		
-		mark5_stream_frame_time_vdif(ms, &mjd_d, &sec_d, &ns_d);
+		mark5_stream_frame_time_vdifb(ms, &mjd_d, &sec_d, &ns_d);
 
 		ns_t = (long long)(ms->framenum)*(long long)(ms->gframens/ms->framegranularity) + (long long)(ms->ns);
 		sec_t = ns_t / 1000000000L;
@@ -2892,8 +2226,8 @@ static int mark5_format_vdif_validate(const struct mark5_stream *ms)
 
 		if(mjd_t != mjd_d || sec_t != sec_d || fabs((double)ns_t - ns_d) > 0.000001)
 		{
-			fprintf(m5stdout, "VDIF validate[%lld]: %d %d %f : %d %d %lld\n",
-				ms->framenum,   mjd_d, sec_d, ns_d,   mjd_t, sec_t, ns_t);
+			fprintf(m5stdout, "VDIFB validate[%lld]: %d %d %f : %d %d %lld\n",
+				ms->framenum, mjd_d, sec_d, ns_d,   mjd_t, sec_t, ns_t);
 			
 			return 0;
 		}
@@ -2904,7 +2238,7 @@ static int mark5_format_vdif_validate(const struct mark5_stream *ms)
 	if((header[0] >> 31) & 0x01)
 	{
 #ifdef DEBUG
-		fprintf(m5stderr, "mark5_format_vdif_validate: Skipping invalid frame\n");
+		fprintf(m5stderr, "mark5_format_vdifb_validate: Skipping invalid frame\n");
 #endif
 
 		return 0;
@@ -2913,28 +2247,28 @@ static int mark5_format_vdif_validate(const struct mark5_stream *ms)
 	return 1;
 }
 
-static int mark5_format_vdif_resync(struct mark5_stream *ms)
+static int mark5_format_vdifb_resync(struct mark5_stream *ms)
 {
 	/* FIXME: not implemented yet */
-	return mark5_format_vdif_validate(ms);
+	return mark5_format_vdifb_validate(ms);
 }
 
-void mark5_format_vdif_set_leapsecs(struct mark5_stream *ms, int leapsecs)
+void mark5_format_vdifb_set_leapsecs(struct mark5_stream *ms, int leapsecs)
 {
-	struct mark5_format_vdif *f;
+	struct mark5_format_vdifb *f;
 	
-	f = (struct mark5_format_vdif *)(ms->formatdata);
+	f = (struct mark5_format_vdifb *)(ms->formatdata);
 
 	f->leapsecs = leapsecs;
 }
 
-struct mark5_format_generic *new_mark5_format_vdif(int Mbps, 
+struct mark5_format_generic *new_mark5_format_vdifb(int Mbps, 
 	int nchan, int nbit, int decimation, 
 	int databytesperpacket, int frameheadersize, int usecomplex)
 {
 	static int first = 1;
 	struct mark5_format_generic *f;
-	struct mark5_format_vdif *v;
+	struct mark5_format_vdifb *v;
 	int decoderindex = 0;
 
 	if(first)
@@ -2949,7 +2283,7 @@ struct mark5_format_generic *new_mark5_format_vdif(int Mbps,
 	}
 	else
 	{
-		fprintf(m5stderr, "VDIF decimation must be 1 for now\n");
+		fprintf(m5stderr, "VDIFB decimation must be 1 for now\n");
 		
 		return 0;
 	}
@@ -2976,7 +2310,7 @@ struct mark5_format_generic *new_mark5_format_vdif(int Mbps,
 	}
 	else
 	{
-		fprintf(m5stderr, "VDIF nbit must be 1, 2, 4, 8 or 16 for now\n");
+		fprintf(m5stderr, "VDIFB nbit must be 1, 2, 4, 8 or 16 for now\n");
 		
 		return 0;
 	}
@@ -3011,12 +2345,12 @@ struct mark5_format_generic *new_mark5_format_vdif(int Mbps,
 	}
 	else
 	{
-		fprintf(m5stderr, "VDIF nchan must be 1, 2, 4, 8, 16, 32 or 64 for now\n");
+		fprintf(m5stderr, "VDIFB nchan must be 1, 2, 4, 8, 16, 32 or 64 for now\n");
 
 		return 0;
 	}
 
-	v = (struct mark5_format_vdif *)calloc(1, sizeof(struct mark5_format_vdif));
+	v = (struct mark5_format_vdifb *)calloc(1, sizeof(struct mark5_format_vdifb));
 	f = (struct mark5_format_generic *)calloc(1, sizeof(struct mark5_format_generic));
 
 	v->frameheadersize = frameheadersize;
@@ -3026,14 +2360,14 @@ struct mark5_format_generic *new_mark5_format_vdif(int Mbps,
 	f->nchan = nchan;
 	f->nbit = nbit;
 	f->formatdata = v;
-	f->formatdatasize = sizeof(struct mark5_format_vdif);
+	f->formatdatasize = sizeof(struct mark5_format_vdifb);
 	
 	/* set some function pointers */
-	f->gettime = mark5_stream_frame_time_vdif;
-	f->init_format = mark5_format_vdif_init;
-	f->final_format = mark5_format_vdif_final;
-	f->validate = mark5_format_vdif_validate;
-	f->resync = mark5_format_vdif_resync;
+	f->gettime = mark5_stream_frame_time_vdifb;
+	f->init_format = mark5_format_vdifb_init;
+	f->final_format = mark5_format_vdifb_final;
+	f->validate = mark5_format_vdifb_validate;
+	f->resync = mark5_format_vdifb_resync;
 	f->decimation = decimation;
 	f->decode = 0;
 	f->complex_decode = 0;
@@ -3044,76 +2378,65 @@ struct mark5_format_generic *new_mark5_format_vdif(int Mbps,
 	    switch(decoderindex)
 	    {
 	        case 0:
-			f->decode = vdif_decode_1channel_1bit_decimation1;
+			f->decode = vdifb_decode_1channel_1bit_decimation1;
 			break;
 		case 1:
-			f->decode = vdif_decode_2channel_1bit_decimation1;
+			f->decode = vdifb_decode_2channel_1bit_decimation1;
 			break;
 		case 2:
-			f->decode = vdif_decode_4channel_1bit_decimation1;
+			f->decode = vdifb_decode_4channel_1bit_decimation1;
 			break;
 		case 3:
-			f->decode = vdif_decode_8channel_1bit_decimation1;
-			break;
 		case 4:
-			f->decode = vdif_decode_16channel_1bit_decimation1;
-			break;
 	        case 5:
-			f->decode = vdif_decode_32channel_1bit_decimation1;
+			f->decode = vdifb_decode_Nchannel_1bit_decimation1;
 			break;
 
 		case 32:
-			f->decode = vdif_decode_1channel_2bit_decimation1;
-			f->count = vdif_count_1channel_2bit_decimation1;
+			f->decode = vdifb_decode_1channel_2bit_decimation1;
+			f->count = vdifb_count_1channel_2bit_decimation1;
 			break;
 		case 33:
-			f->decode = vdif_decode_2channel_2bit_decimation1;
-			f->count = vdif_count_2channel_2bit_decimation1;
+			f->decode = vdifb_decode_2channel_2bit_decimation1;
+			f->count = vdifb_count_2channel_2bit_decimation1;
 			break;
 		case 34:
-			f->decode = vdif_decode_4channel_2bit_decimation1;
-			f->count = vdif_count_4channel_2bit_decimation1;
+			f->decode = vdifb_decode_4channel_2bit_decimation1;
+			f->count = vdifb_count_4channel_2bit_decimation1;
 			break;
 		case 35:
-			f->decode = vdif_decode_8channel_2bit_decimation1;
-			f->count = vdif_count_8channel_2bit_decimation1;
-			break;
 		case 36:
-			f->decode = vdif_decode_16channel_2bit_decimation1;
-			f->count = vdif_count_16channel_2bit_decimation1;
-			break;
-		case 37:
-			f->decode = vdif_decode_32channel_2bit_decimation1;
-			f->count = vdif_count_32channel_2bit_decimation1;
+			f->decode = vdifb_decode_Nchannel_2bit_decimation1;
+			f->count = vdifb_count_Nchannel_2bit_decimation1;
 			break;
 
 		case 64:
-			f->decode = vdif_decode_1channel_4bit_decimation1;
+			f->decode = vdifb_decode_1channel_4bit_decimation1;
 			break;
 		case 65:
-			f->decode = vdif_decode_2channel_4bit_decimation1;
+			f->decode = vdifb_decode_2channel_4bit_decimation1;
 			break;
 		case 66:
-			f->decode = vdif_decode_4channel_4bit_decimation1;
+			f->decode = vdifb_decode_4channel_4bit_decimation1;
 			break;
 		case 67:
-			f->decode = vdif_decode_8channel_4bit_decimation1;
+			f->decode = vdifb_decode_8channel_4bit_decimation1;
 			break;
 
 		case 96:
-			f->decode = vdif_decode_1channel_8bit_decimation1;
+			f->decode = vdifb_decode_1channel_8bit_decimation1;
 			break;
 		case 97:
-			f->decode = vdif_decode_2channel_8bit_decimation1;
+			f->decode = vdifb_decode_2channel_8bit_decimation1;
 			break;
 		case 98:
-			f->decode = vdif_decode_4channel_8bit_decimation1;
+			f->decode = vdifb_decode_4channel_8bit_decimation1;
 			break;
 	    }
 
 	    if(f->decode == 0)
 	    {
-		fprintf(m5stderr, "VDIF: Unsupported combination of decimation, channels and bits\n");
+		fprintf(m5stderr, "VDIFB: Illegal combination of decimation, channels and bits\n");
 		free(v);
 		free(f);
 		
@@ -3122,92 +2445,92 @@ struct mark5_format_generic *new_mark5_format_vdif(int Mbps,
 	}
 	else
 	{
+	    fprintf(m5stderr, "VDIFB: complex not supported yet\n");
+	    free(v);
+	    free(f);
+
+	    return 0;
+#if 0
 	    switch(decoderindex)
 	    {
 	        case 0:
-			f->complex_decode = vdif_complex_decode_1channel_1bit_decimation1;
+			f->complex_decode = vdifb_complex_decode_1channel_1bit_decimation1;
 			break;
 		case 1:
-			f->complex_decode = vdif_complex_decode_2channel_1bit_decimation1;
+			f->complex_decode = vdifb_complex_decode_2channel_1bit_decimation1;
 			break;
 		case 2:
-			f->complex_decode = vdif_complex_decode_4channel_1bit_decimation1;
+			f->complex_decode = vdifb_complex_decode_4channel_1bit_decimation1;
 			break;
 		case 3:
-			f->complex_decode = vdif_complex_decode_8channel_1bit_decimation1;
+			f->complex_decode = vdifb_complex_decode_8channel_1bit_decimation1;
 			break;
 		case 4:
-			f->complex_decode = vdif_complex_decode_16channel_1bit_decimation1;
+			f->complex_decode = vdifb_complex_decode_16channel_1bit_decimation1;
 			break;
 
 		case 32:
-			f->complex_decode = vdif_complex_decode_1channel_2bit_decimation1;
+			f->complex_decode = vdifb_complex_decode_1channel_2bit_decimation1;
 			break;
 		case 33:
-			f->complex_decode = vdif_complex_decode_2channel_2bit_decimation1;
+			f->complex_decode = vdifb_complex_decode_2channel_2bit_decimation1;
 			break;
 		case 34:
-			f->complex_decode = vdif_complex_decode_4channel_2bit_decimation1;
+			f->complex_decode = vdifb_complex_decode_4channel_2bit_decimation1;
 			break;
 		case 35:
-			f->complex_decode = vdif_complex_decode_8channel_2bit_decimation1;
+			f->complex_decode = vdifb_complex_decode_8channel_2bit_decimation1;
 			break;
 		case 36:
-			f->complex_decode = vdif_complex_decode_16channel_2bit_decimation1;
-			break;
-		case 37:
-			f->complex_decode = vdif_complex_decode_32channel_2bit_decimation1;
-			break;
-		case 38:
-			f->complex_decode = vdif_complex_decode_64channel_2bit_decimation1;
+			f->complex_decode = vdifb_complex_decode_16channel_2bit_decimation1;
 			break;
 
 		case 64:
-			f->complex_decode = vdif_complex_decode_1channel_4bit_decimation1;
+			f->complex_decode = vdifb_complex_decode_1channel_4bit_decimation1;
 			break;
 		case 65:
-			f->complex_decode = vdif_complex_decode_2channel_4bit_decimation1;
+			f->complex_decode = vdifb_complex_decode_2channel_4bit_decimation1;
 			break;
 		case 66:
-			f->complex_decode = vdif_complex_decode_4channel_4bit_decimation1;
+			f->complex_decode = vdifb_complex_decode_4channel_4bit_decimation1;
 			break;
 
 		case 96:
-			f->complex_decode = vdif_complex_decode_1channel_8bit_decimation1;
+			f->complex_decode = vdifb_complex_decode_1channel_8bit_decimation1;
 			break;
 		case 97:
-			f->complex_decode = vdif_complex_decode_2channel_8bit_decimation1;
+			f->complex_decode = vdifb_complex_decode_2channel_8bit_decimation1;
 			break;
 		case 98:
-			f->complex_decode = vdif_complex_decode_4channel_8bit_decimation1;
+			f->complex_decode = vdifb_complex_decode_4channel_8bit_decimation1;
 			break;
 
 		case 128:
-			f->complex_decode = vdif_complex_decode_1channel_16bit_decimation1;
+			f->complex_decode = vdifb_complex_decode_1channel_16bit_decimation1;
 			break;
 		case 129:
-			f->complex_decode = vdif_complex_decode_2channel_16bit_decimation1;
+			f->complex_decode = vdifb_complex_decode_2channel_16bit_decimation1;
 			break;
 		case 130:
-			f->complex_decode = vdif_complex_decode_4channel_16bit_decimation1;
+			f->complex_decode = vdifb_complex_decode_4channel_16bit_decimation1;
 			break;
 		case 131:
-			f->complex_decode = vdif_complex_decode_8channel_16bit_decimation1;
+			f->complex_decode = vdifb_complex_decode_8channel_16bit_decimation1;
 			break;
 		case 132:
-			f->complex_decode = vdif_complex_decode_16channel_16bit_decimation1;
+			f->complex_decode = vdifb_complex_decode_16channel_16bit_decimation1;
 			break;
 	    }
 
 	    if(f->complex_decode == 0)
 	    {
-		fprintf(m5stderr, "VDIF: Unsupported combination of decimation, channels and bits\n");
+		fprintf(m5stderr, "VDIF: Illegal combination of decimation, channels and bits\n");
 		free(v);
 		free(f);
 
 		return 0;
 	    }
-
+#endif
 	}
 
 	return f;
@@ -3219,7 +2542,7 @@ struct mark5_format_generic *new_mark5_format_vdif(int Mbps,
  *
  * Note: this only works for nbit = 2^n
  */
-static int is_legal_vdif_framesize(int framesize)
+static int is_legal_vdifb_framesize(int framesize)
 {
 	framesize -= 32;
 
@@ -3256,7 +2579,7 @@ static int is_legal_vdif_framesize(int framesize)
  *
  * here framesize includes the 32 byte header
  */
-int find_vdif_frame(const unsigned char *data, size_t length, size_t *offset, int *framesize)
+int find_vdifb_frame(const unsigned char *data, size_t length, size_t *offset, int *framesize)
 {
 	int fs, fs0, fs1;
 
@@ -3274,7 +2597,7 @@ int find_vdif_frame(const unsigned char *data, size_t length, size_t *offset, in
 	{
 		size_t maxOffset;
 
-		if(!is_legal_vdif_framesize(fs))
+		if(!is_legal_vdifb_framesize(fs))
 		{
 			continue;
 		}
@@ -3318,22 +2641,22 @@ int find_vdif_frame(const unsigned char *data, size_t length, size_t *offset, in
 	return -1;
 }
 
-int get_vdif_chans_per_thread(const unsigned char *data)
+int get_vdifb_chans_per_thread(const unsigned char *data)
 {
 	return 1 << (data[11] & 0x1F);
 }
 
-int get_vdif_quantization_bits(const unsigned char *data)
+int get_vdifb_quantization_bits(const unsigned char *data)
 {
 	return ((data[15] >> 2) & 0x1F) + 1;
 }
 
-int get_vdif_complex(const unsigned char *data)
+int get_vdifb_complex(const unsigned char *data)
 {
 	return data[15] >> 7;
 }
 
-int get_vdif_threads(const unsigned char *data, size_t length, int dataframesize)
+int get_vdifb_threads(const unsigned char *data, size_t length, int dataframesize)
 {
 	const int maxThreads = 128;
 	size_t i;

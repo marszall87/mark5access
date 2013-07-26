@@ -1,5 +1,5 @@
 /***************************************************************************
- *   Copyright (C) 2007-2012 by Walter Brisken                             *
+ *   Copyright (C) 2007-2013 by Walter Brisken and Richard Dodson          *
  *                                                                         *
  *   This program is free software; you can redistribute it and/or modify  *
  *   it under the terms of the GNU General Public License as published by  *
@@ -20,12 +20,17 @@
 // SVN properties (DO NOT CHANGE)
 //
 // $Id$
-// $HeadURL$
+// $HeadURL: $
 // $LastChangedRevision$
 // $Author$
 // $LastChangedDate$
 //
 //============================================================================
+
+/* KVN has a non-standard bit pattern in many of their nominally Mark5b recording streams. 
+ * It seemed simpler to split of a copy of mark5_format_kvn5b to host these differences. 
+ * Only the decode routines plus the naming need to be separate. 
+ */
 
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
@@ -38,14 +43,14 @@
 #include <math.h>
 #include "mark5access/mark5_stream.h"
 
-#define MK5B_PAYLOADSIZE 10000
+#define KVN5B_PAYLOADSIZE 10000
 
-const unsigned int mark5bSync       = 0xABADDEED;
+const unsigned int kvn5bSync       = 0xABADDEED;
 
 /* the high mag value for 2-bit reconstruction */
 static const float HiMag = OPTIMAL_2BIT_HIGH;
 
-struct mark5_format_mark5b
+struct mark5_format_kvn5b
 {
 	int nbitstream;
 	int kday;	/* kilo-mjd: ie 51000, 52000, ... */
@@ -131,24 +136,24 @@ static int findfirstframe(const unsigned char *data, int bytes, unsigned int syn
 	return -1;
 }
 
-static int mark5_stream_frame_num_mark5b(const struct mark5_stream *ms)
+static int mark5_stream_frame_num_kvn5b(const struct mark5_stream *ms)
 {
 	return ms->frame[4] + (ms->frame[5] & 0x7F)*256;
 }
 
-static int mark5_stream_frame_time_mark5b(const struct mark5_stream *ms, int *mjd, int *sec, double *ns)
+static int mark5_stream_frame_time_kvn5b(const struct mark5_stream *ms, int *mjd, int *sec, double *ns)
 {
-	struct mark5_format_mark5b *m;
+	struct mark5_format_kvn5b *m;
 	const unsigned char *buf;
 	int i;
 	int framenum;
 	unsigned char nibs[16];
 
-	m = (struct mark5_format_mark5b *)(ms->formatdata);
+	m = (struct mark5_format_kvn5b *)(ms->formatdata);
 
 	buf = ms->frame + 8;
 
-	framenum = mark5_stream_frame_num_mark5b(ms);
+	framenum = mark5_stream_frame_num_kvn5b(ms);
 
 	for(i = 0; i < 4; ++i)
 	{
@@ -188,13 +193,13 @@ static int mark5_stream_frame_time_mark5b(const struct mark5_stream *ms, int *mj
 	return 0;
 }
 
-static void mark5_format_mark5b_genheaders(const struct mark5_stream *ms, int n, unsigned char *where)
+static void mark5_format_kvn5b_genheaders(const struct mark5_stream *ms, int n, unsigned char *where)
 {
 	int i;
 
 	if(!ms)
 	{
-		fprintf(m5stdout, "mark5_format_mark5b_genheaders: ms=0\n");
+		fprintf(m5stdout, "mark5_format_kvn5b_genheaders: ms=0\n");
 
 		return;
 	}
@@ -205,21 +210,21 @@ static void mark5_format_mark5b_genheaders(const struct mark5_stream *ms, int n,
 
 		for(f = 0; f < ms->framegranularity; ++f)
 		{
-			*((unsigned int *)where) = mark5bSync;
+			*((unsigned int *)where) = kvn5bSync;
 		}
 	}
 }
 
-static int mark5_format_mark5b_fixmjd(struct mark5_stream *ms, int refmjd)
+static int mark5_format_kvn5b_fixmjd(struct mark5_stream *ms, int refmjd)
 {
-	struct mark5_format_mark5b *m;
+	struct mark5_format_kvn5b *m;
 
 	if(!ms)
 	{
 		return -1;
 	}
 	
-	m = (struct mark5_format_mark5b *)(ms->formatdata);
+	m = (struct mark5_format_kvn5b *)(ms->formatdata);
 	if(m->kday == 0)
 	{
 		int n;
@@ -236,8 +241,8 @@ static int mark5_format_mark5b_fixmjd(struct mark5_stream *ms, int refmjd)
 
 /************************* decode routines **************************/
 
-static int mark5b_decode_1bitstream_1bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
-{
+static int kvn5b_decode_1bitstream_1bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
+{ // No 1 bit KVN mode. Left same as Mark5B
 	unsigned char *buf;
 	float *fp;
 	int o, i;
@@ -276,7 +281,7 @@ static int mark5b_decode_1bitstream_1bit_decimation1(struct mark5_stream *ms, in
 		++o;
 		data[0][o] = fp[7];
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -292,8 +297,8 @@ static int mark5b_decode_1bitstream_1bit_decimation1(struct mark5_stream *ms, in
 	return nsamp-8*nblank;
 }
 
-static int mark5b_decode_1bitstream_1bit_decimation2(struct mark5_stream *ms, int nsamp, float **data)
-{
+static int kvn5b_decode_1bitstream_1bit_decimation2(struct mark5_stream *ms, int nsamp, float **data)
+{ // No 1 bit KVN mode. Left same as Mark5B
 	unsigned char *buf;
 	float *fp;
 	int o, i;
@@ -324,7 +329,7 @@ static int mark5b_decode_1bitstream_1bit_decimation2(struct mark5_stream *ms, in
 		++o;
 		data[0][o] = fp[6];
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -340,8 +345,8 @@ static int mark5b_decode_1bitstream_1bit_decimation2(struct mark5_stream *ms, in
 	return nsamp-8*nblank;
 }
 
-static int mark5b_decode_1bitstream_1bit_decimation4(struct mark5_stream *ms, int nsamp, float **data)
-{
+static int kvn5b_decode_1bitstream_1bit_decimation4(struct mark5_stream *ms, int nsamp, float **data)
+{ // No 1 bit KVN mode. Left same as Mark5B
 	unsigned char *buf;
 	float *fp;
 	int o, i;
@@ -368,7 +373,7 @@ static int mark5b_decode_1bitstream_1bit_decimation4(struct mark5_stream *ms, in
 		++o;
 		data[0][o] = fp[4];
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -384,8 +389,8 @@ static int mark5b_decode_1bitstream_1bit_decimation4(struct mark5_stream *ms, in
 	return nsamp-8*nblank;
 }
 
-static int mark5b_decode_1bitstream_1bit_decimation8(struct mark5_stream *ms, int nsamp, float **data)
-{
+static int kvn5b_decode_1bitstream_1bit_decimation8(struct mark5_stream *ms, int nsamp, float **data)
+{ // No 1 bit KVN mode. Left same as Mark5B
 	unsigned char *buf;
 	float *fp;
 	int o, i, df;
@@ -411,7 +416,7 @@ static int mark5b_decode_1bitstream_1bit_decimation8(struct mark5_stream *ms, in
 
 		data[0][o] = fp[0];
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -427,8 +432,8 @@ static int mark5b_decode_1bitstream_1bit_decimation8(struct mark5_stream *ms, in
 	return nsamp-8*nblank;
 }
 
-static int mark5b_decode_2bitstream_1bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
-{
+static int kvn5b_decode_2bitstream_1bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
+{ // No 1 bit KVN mode. Left same as Mark5B
 	unsigned char *buf;
 	float *fp;
 	int o, i;
@@ -463,7 +468,7 @@ static int mark5b_decode_2bitstream_1bit_decimation1(struct mark5_stream *ms, in
 		data[0][o] = fp[6];
 		data[1][o] = fp[7];
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -479,8 +484,8 @@ static int mark5b_decode_2bitstream_1bit_decimation1(struct mark5_stream *ms, in
 	return nsamp - 4*nblank;
 }
 
-static int mark5b_decode_2bitstream_1bit_decimation2(struct mark5_stream *ms, int nsamp, float **data)
-{
+static int kvn5b_decode_2bitstream_1bit_decimation2(struct mark5_stream *ms, int nsamp, float **data)
+{ // No 1 bit KVN mode. Left same as Mark5B
 	unsigned char *buf;
 	float *fp;
 	int o, i;
@@ -509,7 +514,7 @@ static int mark5b_decode_2bitstream_1bit_decimation2(struct mark5_stream *ms, in
 		data[0][o] = fp[4];
 		data[1][o] = fp[5];
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -525,8 +530,8 @@ static int mark5b_decode_2bitstream_1bit_decimation2(struct mark5_stream *ms, in
 	return nsamp - 4*nblank;
 }
 
-static int mark5b_decode_2bitstream_1bit_decimation4(struct mark5_stream *ms, int nsamp, float **data)
-{
+static int kvn5b_decode_2bitstream_1bit_decimation4(struct mark5_stream *ms, int nsamp, float **data)
+{ // No 1 bit KVN mode. Left same as Mark5B
 	unsigned char *buf;
 	float *fp;
 	int o, i, df;
@@ -553,7 +558,7 @@ static int mark5b_decode_2bitstream_1bit_decimation4(struct mark5_stream *ms, in
 		data[0][o] = fp[0];
 		data[1][o] = fp[1];
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -569,8 +574,8 @@ static int mark5b_decode_2bitstream_1bit_decimation4(struct mark5_stream *ms, in
 	return nsamp - 4*nblank;
 }
 
-static int mark5b_decode_4bitstream_1bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
-{
+static int kvn5b_decode_4bitstream_1bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
+{ // No 1 bit KVN mode. Left same as Mark5B
 	unsigned char *buf;
 	float *fp;
 	int o, i;
@@ -603,7 +608,7 @@ static int mark5b_decode_4bitstream_1bit_decimation1(struct mark5_stream *ms, in
 		data[2][o] = fp[6];
 		data[3][o] = fp[7];
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -619,8 +624,8 @@ static int mark5b_decode_4bitstream_1bit_decimation1(struct mark5_stream *ms, in
 	return nsamp - 2*nblank;
 }
 
-static int mark5b_decode_4bitstream_1bit_decimation2(struct mark5_stream *ms, int nsamp, float **data)
-{
+static int kvn5b_decode_4bitstream_1bit_decimation2(struct mark5_stream *ms, int nsamp, float **data)
+{ // No 1 bit KVN mode. Left same as Mark5B
 	unsigned char *buf;
 	float *fp;
 	int o, i;
@@ -648,7 +653,7 @@ static int mark5b_decode_4bitstream_1bit_decimation2(struct mark5_stream *ms, in
 		data[2][o] = fp[2];
 		data[3][o] = fp[3];
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -664,8 +669,8 @@ static int mark5b_decode_4bitstream_1bit_decimation2(struct mark5_stream *ms, in
 	return nsamp - 2*nblank;
 }
 
-static int mark5b_decode_4bitstream_1bit_decimation4(struct mark5_stream *ms, int nsamp, float **data)
-{
+static int kvn5b_decode_4bitstream_1bit_decimation4(struct mark5_stream *ms, int nsamp, float **data)
+{ // No 1 bit KVN mode. Left same as Mark5B
 	unsigned char *buf;
 	float *fp;
 	int o, i, df;
@@ -694,7 +699,7 @@ static int mark5b_decode_4bitstream_1bit_decimation4(struct mark5_stream *ms, in
 		data[2][o] = fp[2];
 		data[3][o] = fp[3];
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -710,8 +715,8 @@ static int mark5b_decode_4bitstream_1bit_decimation4(struct mark5_stream *ms, in
 	return nsamp - 2*nblank;
 }
 
-static int mark5b_decode_8bitstream_1bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
-{
+static int kvn5b_decode_8bitstream_1bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
+{ // No 1 bit KVN mode. Left same as Mark5B
 	unsigned char *buf;
 	float *fp;
 	int o, i;
@@ -743,7 +748,7 @@ static int mark5b_decode_8bitstream_1bit_decimation1(struct mark5_stream *ms, in
 		data[6][o] = fp[6];
 		data[7][o] = fp[7];
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -759,8 +764,8 @@ static int mark5b_decode_8bitstream_1bit_decimation1(struct mark5_stream *ms, in
 	return nsamp - nblank;
 }
 
-static int mark5b_decode_8bitstream_1bit_decimation2(struct mark5_stream *ms, int nsamp, float **data)
-{
+static int kvn5b_decode_8bitstream_1bit_decimation2(struct mark5_stream *ms, int nsamp, float **data)
+{ // No 1 bit KVN mode. Left same as Mark5B
 	unsigned char *buf;
 	float *fp;
 	int o, i;
@@ -792,7 +797,7 @@ static int mark5b_decode_8bitstream_1bit_decimation2(struct mark5_stream *ms, in
 		data[6][o] = fp[6];
 		data[7][o] = fp[7];
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -808,8 +813,8 @@ static int mark5b_decode_8bitstream_1bit_decimation2(struct mark5_stream *ms, in
 	return nsamp - nblank;
 }
 
-static int mark5b_decode_8bitstream_1bit_decimation4(struct mark5_stream *ms, int nsamp, float **data)
-{
+static int kvn5b_decode_8bitstream_1bit_decimation4(struct mark5_stream *ms, int nsamp, float **data)
+{ // No 1 bit KVN mode. Left same as Mark5B
 	unsigned char *buf;
 	float *fp;
 	int o, i, df;
@@ -842,7 +847,7 @@ static int mark5b_decode_8bitstream_1bit_decimation4(struct mark5_stream *ms, in
 		data[6][o] = fp[6];
 		data[7][o] = fp[7];
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -858,8 +863,8 @@ static int mark5b_decode_8bitstream_1bit_decimation4(struct mark5_stream *ms, in
 	return nsamp - nblank;
 }
 
-static int mark5b_decode_16bitstream_1bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
-{
+static int kvn5b_decode_16bitstream_1bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
+{ // No 1 bit KVN mode. Left same as Mark5B
 	unsigned char *buf;
 	float *fp0, *fp1;
 	int o, i;
@@ -902,7 +907,7 @@ static int mark5b_decode_16bitstream_1bit_decimation1(struct mark5_stream *ms, i
 		data[14][o] = fp1[6];
 		data[15][o] = fp1[7];
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -918,8 +923,8 @@ static int mark5b_decode_16bitstream_1bit_decimation1(struct mark5_stream *ms, i
 	return nsamp - nblank;
 }
 
-static int mark5b_decode_16bitstream_1bit_decimation2(struct mark5_stream *ms, int nsamp, float **data)
-{
+static int kvn5b_decode_16bitstream_1bit_decimation2(struct mark5_stream *ms, int nsamp, float **data)
+{ // No 1 bit KVN mode. Left same as Mark5B
 	unsigned char *buf;
 	float *fp0, *fp1;
 	int o, i;
@@ -962,7 +967,7 @@ static int mark5b_decode_16bitstream_1bit_decimation2(struct mark5_stream *ms, i
 		data[14][o] = fp1[6];
 		data[15][o] = fp1[7];
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -978,8 +983,8 @@ static int mark5b_decode_16bitstream_1bit_decimation2(struct mark5_stream *ms, i
 	return nsamp - nblank;
 }
 
-static int mark5b_decode_16bitstream_1bit_decimation4(struct mark5_stream *ms, int nsamp, float **data)
-{
+static int kvn5b_decode_16bitstream_1bit_decimation4(struct mark5_stream *ms, int nsamp, float **data)
+{ // No 1 bit KVN mode. Left same as Mark5B
 	unsigned char *buf;
 	float *fp0, *fp1;
 	int o, i, df;
@@ -1024,7 +1029,7 @@ static int mark5b_decode_16bitstream_1bit_decimation4(struct mark5_stream *ms, i
 		data[14][o] = fp1[6];
 		data[15][o] = fp1[7];
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -1040,8 +1045,8 @@ static int mark5b_decode_16bitstream_1bit_decimation4(struct mark5_stream *ms, i
 	return nsamp - nblank;
 }
 
-static int mark5b_decode_32bitstream_1bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
-{
+static int kvn5b_decode_32bitstream_1bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
+{ // No 1 bit KVN mode. Left same as Mark5B
 	unsigned char *buf;
 	float *fp0, *fp1, *fp2, *fp3;
 	int o, i;
@@ -1104,7 +1109,7 @@ static int mark5b_decode_32bitstream_1bit_decimation1(struct mark5_stream *ms, i
 		data[30][o] = fp3[6];
 		data[31][o] = fp3[7];
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -1120,8 +1125,8 @@ static int mark5b_decode_32bitstream_1bit_decimation1(struct mark5_stream *ms, i
 	return nsamp - nblank;
 }
 
-static int mark5b_decode_32bitstream_1bit_decimation2(struct mark5_stream *ms, int nsamp, float **data)
-{
+static int kvn5b_decode_32bitstream_1bit_decimation2(struct mark5_stream *ms, int nsamp, float **data)
+{ // No 1 bit KVN mode. Left same as Mark5B
 	unsigned char *buf;
 	float *fp0, *fp1, *fp2, *fp3;
 	int o, i;
@@ -1184,7 +1189,7 @@ static int mark5b_decode_32bitstream_1bit_decimation2(struct mark5_stream *ms, i
 		data[30][o] = fp3[6];
 		data[31][o] = fp3[7];
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -1200,8 +1205,8 @@ static int mark5b_decode_32bitstream_1bit_decimation2(struct mark5_stream *ms, i
 	return nsamp - nblank;
 }
 
-static int mark5b_decode_32bitstream_1bit_decimation4(struct mark5_stream *ms, int nsamp, float **data)
-{
+static int kvn5b_decode_32bitstream_1bit_decimation4(struct mark5_stream *ms, int nsamp, float **data)
+{ // No 1 bit KVN mode. Left same as Mark5B
 	unsigned char *buf;
 	float *fp0, *fp1, *fp2, *fp3;
 	int o, i, df;
@@ -1265,7 +1270,7 @@ static int mark5b_decode_32bitstream_1bit_decimation4(struct mark5_stream *ms, i
 		data[30][o] = fp3[6];
 		data[31][o] = fp3[7];
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -1283,8 +1288,8 @@ static int mark5b_decode_32bitstream_1bit_decimation4(struct mark5_stream *ms, i
 
 /************************ 2-bit decoders *********************/
 
-static int mark5b_decode_2bitstream_2bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
-{
+static int kvn5b_decode_2bitstream_2bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
+{  // KVN Mode 1: [256MHz-2b]*1 stream: Same as Mark5B
 	unsigned char *buf;
 	float *fp;
 	int o, i;
@@ -1315,7 +1320,7 @@ static int mark5b_decode_2bitstream_2bit_decimation1(struct mark5_stream *ms, in
 		++o;
 		data[0][o] = fp[3];
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -1331,8 +1336,8 @@ static int mark5b_decode_2bitstream_2bit_decimation1(struct mark5_stream *ms, in
 	return nsamp - 4*nblank;
 }
 
-static int mark5b_decode_2bitstream_2bit_decimation2(struct mark5_stream *ms, int nsamp, float **data)
-{
+static int kvn5b_decode_2bitstream_2bit_decimation2(struct mark5_stream *ms, int nsamp, float **data)
+{ // No equiv KVN mode. Left same as Mark5B
 	unsigned char *buf;
 	float *fp;
 	int o, i;
@@ -1359,7 +1364,7 @@ static int mark5b_decode_2bitstream_2bit_decimation2(struct mark5_stream *ms, in
 		++o;
 		data[0][o] = fp[2];
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -1375,8 +1380,8 @@ static int mark5b_decode_2bitstream_2bit_decimation2(struct mark5_stream *ms, in
 	return nsamp - 4*nblank;
 }
 
-static int mark5b_decode_2bitstream_2bit_decimation4(struct mark5_stream *ms, int nsamp, float **data)
-{
+static int kvn5b_decode_2bitstream_2bit_decimation4(struct mark5_stream *ms, int nsamp, float **data)
+{ // No equiv KVN mode. Left same as Mark5B
 	unsigned char *buf;
 	float *fp;
 	int o, i, df;
@@ -1402,7 +1407,7 @@ static int mark5b_decode_2bitstream_2bit_decimation4(struct mark5_stream *ms, in
 
 		data[0][o] = fp[0];
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -1418,8 +1423,74 @@ static int mark5b_decode_2bitstream_2bit_decimation4(struct mark5_stream *ms, in
 	return nsamp - 4*nblank;
 }
 
-static int mark5b_decode_4bitstream_2bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
-{
+static int kvn5b_decode_4bitstream_2bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
+{ // KVN Mode 2: [128MHz-2b]*2stream (1024 MBps 32MHz clock)
+	unsigned char *buf;
+	float *fp0,*fp1,*fp2,*fp3;
+	int o, i, h, k;
+	int nblank = 0;
+
+	buf = ms->payload;
+	i = ms->readposition;
+
+	for(o = 0; o < nsamp; ++o)
+	{
+		if(i <  ms->blankzonestartvalid[0] ||
+		   i >= ms->blankzoneendvalid[0])
+		{
+			fp0 = fp1 = fp2 = fp3 = zeros;
+			++nblank;
+		}
+		else
+		{
+			fp0 = lut2bit[buf[i]];++i;
+			fp1 = lut2bit[buf[i]];++i;
+			fp2 = lut2bit[buf[i]];++i;
+			fp3 = lut2bit[buf[i]];++i;
+		}
+		// Done explicitly .. 8 samples in 2 IFs. Two block read in
+		/* // K alternates 0/1;h=[0:7 0:7 8:15 8:15 16:23 16:23 etc]
+		k=(o%16)/8;h=4*(o/4)-(((o%16)/8)*8+(o/16)*8);
+		data[k][h+0] = fp[0];
+		data[k][h+1] = fp[1];
+		data[k][h+2] = fp[2];
+		data[k][h+3] = fp[3];*/
+		data[0][8*(o/8)+0] = fp0[0];
+		data[0][8*(o/8)+1] = fp0[1];
+		data[0][8*(o/8)+2] = fp0[2];
+		data[0][8*(o/8)+3] = fp0[3];
+		data[0][8*(o/8)+4] = fp1[0];
+		data[0][8*(o/8)+5] = fp1[1];
+		data[0][8*(o/8)+6] = fp1[2];
+		data[0][8*(o/8)+7] = fp1[3];
+		data[1][8*(o/8)+0] = fp2[0];
+		data[1][8*(o/8)+1] = fp2[1];
+		data[1][8*(o/8)+2] = fp2[2];
+		data[1][8*(o/8)+3] = fp2[3];
+		data[1][8*(o/8)+4] = fp3[0];
+		data[1][8*(o/8)+5] = fp3[1];
+		data[1][8*(o/8)+6] = fp3[2];
+		data[1][8*(o/8)+7] = fp3[3];
+		o += 7;
+
+		if(i >= KVN5B_PAYLOADSIZE)
+		{
+			if(mark5_stream_next_frame(ms) < 0)
+			{
+				return -1;
+			}
+			buf = ms->payload;
+			i = 0;
+		}
+	}
+
+	ms->readposition = i;
+
+	return nsamp - 2*nblank;
+}
+
+static int kvn5b_decode_4bitstream_2bit_decimation2(struct mark5_stream *ms, int nsamp, float **data)
+{ // No Equiv KVN mode
 	unsigned char *buf;
 	float *fp;
 	int o, i;
@@ -1444,11 +1515,8 @@ static int mark5b_decode_4bitstream_2bit_decimation1(struct mark5_stream *ms, in
 
 		data[0][o] = fp[0];
 		data[1][o] = fp[1];
-		++o;
-		data[0][o] = fp[2];
-		data[1][o] = fp[3];
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -1464,51 +1532,8 @@ static int mark5b_decode_4bitstream_2bit_decimation1(struct mark5_stream *ms, in
 	return nsamp - 2*nblank;
 }
 
-static int mark5b_decode_4bitstream_2bit_decimation2(struct mark5_stream *ms, int nsamp, float **data)
-{
-	unsigned char *buf;
-	float *fp;
-	int o, i;
-	int nblank = 0;
-
-	buf = ms->payload;
-	i = ms->readposition;
-
-	for(o = 0; o < nsamp; ++o)
-	{
-		if(i <  ms->blankzonestartvalid[0] ||
-		   i >= ms->blankzoneendvalid[0])
-		{
-			fp = zeros;
-			++nblank;
-		}
-		else
-		{
-			fp = lut2bit[buf[i]];
-		}
-		++i;
-
-		data[0][o] = fp[0];
-		data[1][o] = fp[1];
-
-		if(i >= MK5B_PAYLOADSIZE)
-		{
-			if(mark5_stream_next_frame(ms) < 0)
-			{
-				return -1;
-			}
-			buf = ms->payload;
-			i = 0;
-		}
-	}
-
-	ms->readposition = i;
-
-	return nsamp - 2*nblank;
-}
-
-static int mark5b_decode_4bitstream_2bit_decimation4(struct mark5_stream *ms, int nsamp, float **data)
-{
+static int kvn5b_decode_4bitstream_2bit_decimation4(struct mark5_stream *ms, int nsamp, float **data)
+{ // No Equiv KVN mode
 	unsigned char *buf;
 	float *fp;
 	int o, i, df;
@@ -1535,7 +1560,7 @@ static int mark5b_decode_4bitstream_2bit_decimation4(struct mark5_stream *ms, in
 		data[0][o] = fp[0];
 		data[1][o] = fp[1];
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -1551,8 +1576,8 @@ static int mark5b_decode_4bitstream_2bit_decimation4(struct mark5_stream *ms, in
 	return nsamp - 2*nblank;
 }
 
-static int mark5b_decode_8bitstream_2bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
-{
+static int kvn5b_decode_8bitstream_2bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
+{ // KVN mode 3: [64MHz-2b]*4stream (1024 MBps, 32MHz clock)
 	unsigned char *buf;
 	float *fp;
 	int o, i;
@@ -1575,12 +1600,13 @@ static int mark5b_decode_8bitstream_2bit_decimation1(struct mark5_stream *ms, in
 		}
 		++i;
 
-		data[0][o] = fp[0];
-		data[1][o] = fp[1];
-		data[2][o] = fp[2];
-		data[3][o] = fp[3];
+		// o%4 runs from 0:3  
+		data[o%4][4*(o/4)+0] = fp[0];
+		data[o%4][4*(o/4)+1] = fp[1];
+		data[o%4][4*(o/4)+2] = fp[2];
+		data[o%4][4*(o/4)+3] = fp[3]; 
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -1596,8 +1622,8 @@ static int mark5b_decode_8bitstream_2bit_decimation1(struct mark5_stream *ms, in
 	return nsamp - nblank;
 }
 
-static int mark5b_decode_8bitstream_2bit_decimation2(struct mark5_stream *ms, int nsamp, float **data)
-{
+static int kvn5b_decode_8bitstream_2bit_decimation2(struct mark5_stream *ms, int nsamp, float **data)
+{ // No Equiv KVN mode
 	unsigned char *buf;
 	float *fp;
 	int o, i;
@@ -1625,7 +1651,7 @@ static int mark5b_decode_8bitstream_2bit_decimation2(struct mark5_stream *ms, in
 		data[2][o] = fp[2];
 		data[3][o] = fp[3];
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -1641,8 +1667,8 @@ static int mark5b_decode_8bitstream_2bit_decimation2(struct mark5_stream *ms, in
 	return nsamp - nblank;
 }
 
-static int mark5b_decode_8bitstream_2bit_decimation4(struct mark5_stream *ms, int nsamp, float **data)
-{
+static int kvn5b_decode_8bitstream_2bit_decimation4(struct mark5_stream *ms, int nsamp, float **data)
+{ // No Equiv KVN mode
 	unsigned char *buf;
 	float *fp;
 	int o, i, df;
@@ -1671,7 +1697,7 @@ static int mark5b_decode_8bitstream_2bit_decimation4(struct mark5_stream *ms, in
 		data[2][o] = fp[2];
 		data[3][o] = fp[3];
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -1687,10 +1713,10 @@ static int mark5b_decode_8bitstream_2bit_decimation4(struct mark5_stream *ms, in
 	return nsamp - nblank;
 }
 
-static int mark5b_decode_16bitstream_2bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
-{
+static int kvn5b_decode_16bitstream_2bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
+{ // KVN mode 4: [32 MHz-2b]*8 streams
 	unsigned char *buf;
-	float *fp0, *fp1;
+	float *fp0, *fp1, *fp2, *fp3;
 	int o, i;
 	int nblank = 0;
 
@@ -1702,7 +1728,7 @@ static int mark5b_decode_16bitstream_2bit_decimation1(struct mark5_stream *ms, i
 		if(i <  ms->blankzonestartvalid[0] ||
 		   i >= ms->blankzoneendvalid[0])
 		{
-			fp0 = fp1 = zeros;
+			fp0 = fp1 = fp2 = fp3 = zeros;
 			i += 2;
 			++nblank;
 		}
@@ -1712,18 +1738,32 @@ static int mark5b_decode_16bitstream_2bit_decimation1(struct mark5_stream *ms, i
 			++i;
 			fp1 = lut2bit[buf[i]];
 			++i;
+			fp2 = lut2bit[buf[i]];
+			++i;
+			fp3 = lut2bit[buf[i]];
+			++i;
 		}
 
-		data[0][o] = fp0[0];
-		data[1][o] = fp0[1];
-		data[2][o] = fp0[2];
-		data[3][o] = fp0[3];
-		data[4][o] = fp1[0];
-		data[5][o] = fp1[1];
-		data[6][o] = fp1[2];
-		data[7][o] = fp1[3];
+		// Done explicitly .. 4 samples in 8 IFs, with 2 sampling times
+		data[0][2*(o/2)+0] = fp0[0];
+		data[0][2*(o/2)+1] = fp0[1];
+		data[1][2*(o/2)+0] = fp0[2];
+		data[1][2*(o/2)+1] = fp0[3];
+		data[2][2*(o/2)+0] = fp1[0];
+		data[2][2*(o/2)+1] = fp1[1];
+		data[3][2*(o/2)+0] = fp1[2];
+		data[3][2*(o/2)+1] = fp1[3];
+		data[4][2*(o/2)+0] = fp2[0];
+		data[4][2*(o/2)+1] = fp2[1];
+		data[5][2*(o/2)+0] = fp2[2];
+		data[5][2*(o/2)+1] = fp2[3];
+		data[6][2*(o/2)+0] = fp3[0];
+		data[6][2*(o/2)+1] = fp3[1];
+		data[7][2*(o/2)+0] = fp3[2];
+		data[7][2*(o/2)+1] = fp3[3];
+		o++;
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -1739,8 +1779,8 @@ static int mark5b_decode_16bitstream_2bit_decimation1(struct mark5_stream *ms, i
 	return nsamp - nblank;
 }
 
-static int mark5b_decode_16bitstream_2bit_decimation2(struct mark5_stream *ms, int nsamp, float **data)
-{
+static int kvn5b_decode_16bitstream_2bit_decimation2(struct mark5_stream *ms, int nsamp, float **data)
+{ // No equiv KVN mode. Left same as Mark5B
 	unsigned char *buf;
 	float *fp0, *fp1;
 	int o, i;
@@ -1775,7 +1815,7 @@ static int mark5b_decode_16bitstream_2bit_decimation2(struct mark5_stream *ms, i
 		data[6][o] = fp1[2];
 		data[7][o] = fp1[3];
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -1791,8 +1831,8 @@ static int mark5b_decode_16bitstream_2bit_decimation2(struct mark5_stream *ms, i
 	return nsamp - nblank;
 }
 
-static int mark5b_decode_16bitstream_2bit_decimation4(struct mark5_stream *ms, int nsamp, float **data)
-{
+static int kvn5b_decode_16bitstream_2bit_decimation4(struct mark5_stream *ms, int nsamp, float **data)
+{ // No equiv KVN mode. Left same as Mark5B
 	unsigned char *buf;
 	float *fp0, *fp1;
 	int o, i, df;
@@ -1828,7 +1868,7 @@ static int mark5b_decode_16bitstream_2bit_decimation4(struct mark5_stream *ms, i
 		data[6][o] = fp1[2];
 		data[7][o] = fp1[3];
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -1844,8 +1884,8 @@ static int mark5b_decode_16bitstream_2bit_decimation4(struct mark5_stream *ms, i
 	return nsamp - nblank;
 }
 
-static int mark5b_decode_32bitstream_2bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
-{
+static int kvn5b_decode_32bitstream_2bit_decimation1(struct mark5_stream *ms, int nsamp, float **data)
+{ // KVM mode 5&6: [16MHz-2b]*16 stream. Equiv to Mark5B
 	unsigned char *buf;
 	float *fp0, *fp1, *fp2, *fp3;
 	int o, i;
@@ -1892,7 +1932,7 @@ static int mark5b_decode_32bitstream_2bit_decimation1(struct mark5_stream *ms, i
 		data[14][o] = fp3[2];
 		data[15][o] = fp3[3];
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -1908,8 +1948,8 @@ static int mark5b_decode_32bitstream_2bit_decimation1(struct mark5_stream *ms, i
 	return nsamp - nblank;
 }
 
-static int mark5b_decode_32bitstream_2bit_decimation2(struct mark5_stream *ms, int nsamp, float **data)
-{
+static int kvn5b_decode_32bitstream_2bit_decimation2(struct mark5_stream *ms, int nsamp, float **data)
+{ // No equiv KVN mode. Left same as Mark5B
 	unsigned char *buf;
 	float *fp0, *fp1, *fp2, *fp3;
 	int o, i;
@@ -1956,7 +1996,7 @@ static int mark5b_decode_32bitstream_2bit_decimation2(struct mark5_stream *ms, i
 		data[14][o] = fp3[2];
 		data[15][o] = fp3[3];
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -1972,8 +2012,8 @@ static int mark5b_decode_32bitstream_2bit_decimation2(struct mark5_stream *ms, i
 	return nsamp - nblank;
 }
 
-static int mark5b_decode_32bitstream_2bit_decimation4(struct mark5_stream *ms, int nsamp, float **data)
-{
+static int kvn5b_decode_32bitstream_2bit_decimation4(struct mark5_stream *ms, int nsamp, float **data)
+{ // No equiv KVN mode. Left same as Mark5B
 	unsigned char *buf;
 	float *fp0, *fp1, *fp2, *fp3;
 	int o, i, df;
@@ -2021,7 +2061,7 @@ static int mark5b_decode_32bitstream_2bit_decimation4(struct mark5_stream *ms, i
 		data[14][o] = fp3[2];
 		data[15][o] = fp3[3];
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -2039,7 +2079,7 @@ static int mark5b_decode_32bitstream_2bit_decimation4(struct mark5_stream *ms, i
 
 /************************ 2-bit counters *********************/
 
-static int mark5b_count_2bitstream_2bit_decimation1(struct mark5_stream *ms, int nsamp, unsigned int *highstates)
+static int kvn5b_count_2bitstream_2bit_decimation1(struct mark5_stream *ms, int nsamp, unsigned int *highstates)
 {
 	unsigned char *buf;
 	unsigned char *fp;
@@ -2066,7 +2106,7 @@ static int mark5b_count_2bitstream_2bit_decimation1(struct mark5_stream *ms, int
 		}
 		++i;
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -2082,7 +2122,7 @@ static int mark5b_count_2bitstream_2bit_decimation1(struct mark5_stream *ms, int
 	return nsamp - 4*nblank;
 }
 
-static int mark5b_count_2bitstream_2bit_decimation2(struct mark5_stream *ms, int nsamp, unsigned int *highstates)
+static int kvn5b_count_2bitstream_2bit_decimation2(struct mark5_stream *ms, int nsamp, unsigned int *highstates)
 {
 	unsigned char *buf;
 	unsigned char *fp;
@@ -2107,7 +2147,7 @@ static int mark5b_count_2bitstream_2bit_decimation2(struct mark5_stream *ms, int
 		}
 		++i;
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -2123,7 +2163,7 @@ static int mark5b_count_2bitstream_2bit_decimation2(struct mark5_stream *ms, int
 	return nsamp - 4*nblank;
 }
 
-static int mark5b_count_2bitstream_2bit_decimation4(struct mark5_stream *ms, int nsamp, unsigned int *highstates)
+static int kvn5b_count_2bitstream_2bit_decimation4(struct mark5_stream *ms, int nsamp, unsigned int *highstates)
 {
 	unsigned char *buf;
 	unsigned char *fp;
@@ -2148,7 +2188,7 @@ static int mark5b_count_2bitstream_2bit_decimation4(struct mark5_stream *ms, int
 		}
 		i += df;
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -2164,7 +2204,7 @@ static int mark5b_count_2bitstream_2bit_decimation4(struct mark5_stream *ms, int
 	return nsamp - 4*nblank;
 }
 
-static int mark5b_count_4bitstream_2bit_decimation1(struct mark5_stream *ms, int nsamp, unsigned int *highstates)
+static int kvn5b_count_4bitstream_2bit_decimation1(struct mark5_stream *ms, int nsamp, unsigned int *highstates)
 {
 	unsigned char *buf;
 	unsigned char *fp;
@@ -2191,7 +2231,7 @@ static int mark5b_count_4bitstream_2bit_decimation1(struct mark5_stream *ms, int
 		}
 		++i;
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -2207,7 +2247,7 @@ static int mark5b_count_4bitstream_2bit_decimation1(struct mark5_stream *ms, int
 	return nsamp - 2*nblank;
 }
 
-static int mark5b_count_4bitstream_2bit_decimation2(struct mark5_stream *ms, int nsamp, unsigned int *highstates)
+static int kvn5b_count_4bitstream_2bit_decimation2(struct mark5_stream *ms, int nsamp, unsigned int *highstates)
 {
 	unsigned char *buf;
 	unsigned char *fp;
@@ -2232,7 +2272,7 @@ static int mark5b_count_4bitstream_2bit_decimation2(struct mark5_stream *ms, int
 		}
 		++i;
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -2248,7 +2288,7 @@ static int mark5b_count_4bitstream_2bit_decimation2(struct mark5_stream *ms, int
 	return nsamp - 2*nblank;
 }
 
-static int mark5b_count_4bitstream_2bit_decimation4(struct mark5_stream *ms, int nsamp, unsigned int *highstates)
+static int kvn5b_count_4bitstream_2bit_decimation4(struct mark5_stream *ms, int nsamp, unsigned int *highstates)
 {
 	unsigned char *buf;
 	unsigned char *fp;
@@ -2274,7 +2314,7 @@ static int mark5b_count_4bitstream_2bit_decimation4(struct mark5_stream *ms, int
 		}
 		i += df;
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -2290,7 +2330,7 @@ static int mark5b_count_4bitstream_2bit_decimation4(struct mark5_stream *ms, int
 	return nsamp - 2*nblank;
 }
 
-static int mark5b_count_8bitstream_2bit_decimation1(struct mark5_stream *ms, int nsamp, unsigned int *highstates)
+static int kvn5b_count_8bitstream_2bit_decimation1(struct mark5_stream *ms, int nsamp, unsigned int *highstates)
 {
 	unsigned char *buf;
 	unsigned char *fp;
@@ -2317,7 +2357,7 @@ static int mark5b_count_8bitstream_2bit_decimation1(struct mark5_stream *ms, int
 		}
 		++i;
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -2333,7 +2373,7 @@ static int mark5b_count_8bitstream_2bit_decimation1(struct mark5_stream *ms, int
 	return nsamp - nblank;
 }
 
-static int mark5b_count_8bitstream_2bit_decimation2(struct mark5_stream *ms, int nsamp, unsigned int *highstates)
+static int kvn5b_count_8bitstream_2bit_decimation2(struct mark5_stream *ms, int nsamp, unsigned int *highstates)
 {
 	unsigned char *buf;
 	unsigned char *fp;
@@ -2360,7 +2400,7 @@ static int mark5b_count_8bitstream_2bit_decimation2(struct mark5_stream *ms, int
 		}
 		i += 2;
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -2376,7 +2416,7 @@ static int mark5b_count_8bitstream_2bit_decimation2(struct mark5_stream *ms, int
 	return nsamp - nblank;
 }
 
-static int mark5b_count_8bitstream_2bit_decimation4(struct mark5_stream *ms, int nsamp, unsigned int *highstates)
+static int kvn5b_count_8bitstream_2bit_decimation4(struct mark5_stream *ms, int nsamp, unsigned int *highstates)
 {
 	unsigned char *buf;
 	unsigned char *fp;
@@ -2404,7 +2444,7 @@ static int mark5b_count_8bitstream_2bit_decimation4(struct mark5_stream *ms, int
 		}
 		i += df;
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -2420,7 +2460,7 @@ static int mark5b_count_8bitstream_2bit_decimation4(struct mark5_stream *ms, int
 	return nsamp - nblank;
 }
 
-static int mark5b_count_16bitstream_2bit_decimation1(struct mark5_stream *ms, int nsamp, unsigned int *highstates)
+static int kvn5b_count_16bitstream_2bit_decimation1(struct mark5_stream *ms, int nsamp, unsigned int *highstates)
 {
 	unsigned char *buf;
 	unsigned char *fp0, *fp1;
@@ -2454,7 +2494,7 @@ static int mark5b_count_16bitstream_2bit_decimation1(struct mark5_stream *ms, in
 			highstates[7] += fp1[3];
 		}
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -2470,7 +2510,7 @@ static int mark5b_count_16bitstream_2bit_decimation1(struct mark5_stream *ms, in
 	return nsamp - nblank;
 }
 
-static int mark5b_count_16bitstream_2bit_decimation2(struct mark5_stream *ms, int nsamp, unsigned int *highstates)
+static int kvn5b_count_16bitstream_2bit_decimation2(struct mark5_stream *ms, int nsamp, unsigned int *highstates)
 {
 	unsigned char *buf;
 	unsigned char *fp0, *fp1;
@@ -2504,7 +2544,7 @@ static int mark5b_count_16bitstream_2bit_decimation2(struct mark5_stream *ms, in
 			highstates[7] += fp1[3];
 		}
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -2520,7 +2560,7 @@ static int mark5b_count_16bitstream_2bit_decimation2(struct mark5_stream *ms, in
 	return nsamp - nblank;
 }
 
-static int mark5b_count_16bitstream_2bit_decimation4(struct mark5_stream *ms, int nsamp, unsigned int *highstates)
+static int kvn5b_count_16bitstream_2bit_decimation4(struct mark5_stream *ms, int nsamp, unsigned int *highstates)
 {
 	unsigned char *buf;
 	unsigned char *fp0, *fp1;
@@ -2555,7 +2595,7 @@ static int mark5b_count_16bitstream_2bit_decimation4(struct mark5_stream *ms, in
 		}
 		i += df;
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -2571,7 +2611,7 @@ static int mark5b_count_16bitstream_2bit_decimation4(struct mark5_stream *ms, in
 	return nsamp - nblank;
 }
 
-static int mark5b_count_32bitstream_2bit_decimation1(struct mark5_stream *ms, int nsamp, unsigned int *highstates)
+static int kvn5b_count_32bitstream_2bit_decimation1(struct mark5_stream *ms, int nsamp, unsigned int *highstates)
 {
 	unsigned char *buf;
 	unsigned char *fp0, *fp1, *fp2, *fp3;
@@ -2617,7 +2657,7 @@ static int mark5b_count_32bitstream_2bit_decimation1(struct mark5_stream *ms, in
 			highstates[15] += fp3[3];
 		}
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -2633,7 +2673,7 @@ static int mark5b_count_32bitstream_2bit_decimation1(struct mark5_stream *ms, in
 	return nsamp - nblank;
 }
 
-static int mark5b_count_32bitstream_2bit_decimation2(struct mark5_stream *ms, int nsamp, unsigned int *highstates)
+static int kvn5b_count_32bitstream_2bit_decimation2(struct mark5_stream *ms, int nsamp, unsigned int *highstates)
 {
 	unsigned char *buf;
 	unsigned char *fp0, *fp1, *fp2, *fp3;
@@ -2679,7 +2719,7 @@ static int mark5b_count_32bitstream_2bit_decimation2(struct mark5_stream *ms, in
 			highstates[15] += fp3[3];
 		}
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -2695,7 +2735,7 @@ static int mark5b_count_32bitstream_2bit_decimation2(struct mark5_stream *ms, in
 	return nsamp - nblank;
 }
 
-static int mark5b_count_32bitstream_2bit_decimation4(struct mark5_stream *ms, int nsamp, unsigned int *highstates)
+static int kvn5b_count_32bitstream_2bit_decimation4(struct mark5_stream *ms, int nsamp, unsigned int *highstates)
 {
 	unsigned char *buf;
 	unsigned char *fp0, *fp1, *fp2, *fp3;
@@ -2742,7 +2782,7 @@ static int mark5b_count_32bitstream_2bit_decimation4(struct mark5_stream *ms, in
 		}
 		i += df;
 
-		if(i >= MK5B_PAYLOADSIZE)
+		if(i >= KVN5B_PAYLOADSIZE)
 		{
 			if(mark5_stream_next_frame(ms) < 0)
 			{
@@ -2760,17 +2800,16 @@ static int mark5b_count_32bitstream_2bit_decimation4(struct mark5_stream *ms, in
 
 /******************************************************************/
 
-static int mark5_format_mark5b_make_formatname(struct mark5_stream *ms)
+static int mark5_format_kvn5b_make_formatname(struct mark5_stream *ms)
 {
-	snprintf(ms->formatname, MARK5_STREAM_ID_LENGTH, "Mark5B-%d-%d-%d", 
-		ms->Mbps, ms->nchan, ms->nbit);
+	snprintf(ms->formatname, MARK5_STREAM_ID_LENGTH, "KVN5B-%d-%d-%d", ms->Mbps, ms->nchan, ms->nbit);
 
 	return 0;
 }
 
-static int mark5_format_mark5b_init(struct mark5_stream *ms)
+static int mark5_format_kvn5b_init(struct mark5_stream *ms)
 {
-	struct mark5_format_mark5b *f;
+	struct mark5_format_kvn5b *f;
 	int mjd1, sec1, ns1;
 	double dns, dns1;
 	int datarate;
@@ -2778,12 +2817,12 @@ static int mark5_format_mark5b_init(struct mark5_stream *ms)
 
 	if(!ms)
 	{
-		fprintf(m5stderr, "mark5_format_mark5b_init: ms = 0\n");
+		fprintf(m5stderr, "mark5_format_kvn5binit: ms = 0\n");
 
 		return -1;
 	}
 
-	f = (struct mark5_format_mark5b *)(ms->formatdata);
+	f = (struct mark5_format_kvn5b *)(ms->formatdata);
 
 	ms->samplegranularity = 8/(f->nbitstream*ms->decimation);
 	if(ms->samplegranularity <= 0)
@@ -2806,7 +2845,7 @@ static int mark5_format_mark5b_init(struct mark5_stream *ms)
 
 		if(ms->datawindowsize < ms->framebytes)
 		{
-			fprintf(m5stderr, "mark5_format_mark5b_init: windowsize too small: %Ld < %d\n", ms->datawindowsize, ms->framebytes);
+			fprintf(m5stderr, "mark5_format_kvn5b_init: windowsize too small: %Ld < %d\n", ms->datawindowsize, ms->framebytes);
 
 			return -1;
 		}
@@ -2816,7 +2855,7 @@ static int mark5_format_mark5b_init(struct mark5_stream *ms)
 			ms->datawindowsize : (1<<20);
 
 		/* first look for normal Mark5B sync word */
-		ms->frameoffset = findfirstframe(ms->datawindow, bytes, mark5bSync);
+		ms->frameoffset = findfirstframe(ms->datawindow, bytes, kvn5bSync);
 
 		if(ms->frameoffset < 0)
 		{
@@ -2873,7 +2912,7 @@ static int mark5_format_mark5b_init(struct mark5_stream *ms)
 			}
 			else
 			{
-				fprintf(m5stderr, "Warning: mark5_format_mark5b_init: assuming 2048-16-2\n");
+				fprintf(m5stderr, "Warning: mark5_format_kvn5b_init: assuming 2048-16-2\n");
 
 				ms->framens = 39062.5;
 				ms->Mbps = 2048;
@@ -2895,7 +2934,7 @@ static int mark5_format_mark5b_init(struct mark5_stream *ms)
 		{
 			int framenum;
 
-			framenum = mark5_stream_frame_num_mark5b(ms);
+			framenum = mark5_stream_frame_num_kvn5b(ms);
 			df = k - framenum % k;
 			if(df != k)
 			{
@@ -2914,27 +2953,28 @@ static int mark5_format_mark5b_init(struct mark5_stream *ms)
 
 	ms->gframens = (int)(ms->framegranularity*ms->framens + 0.5);
 
-	ms->format = MK5_FORMAT_MARK5B;
-	mark5_format_mark5b_make_formatname(ms);
+	ms->format = MK5_FORMAT_KVN5B;
+	mark5_format_kvn5b_make_formatname(ms);
 
 	return 0;
 }
 
-static int mark5_format_mark5b_final(struct mark5_stream *ms)
+static int mark5_format_kvn5b_final(struct mark5_stream *ms)
 {
-	if(!ms)
-	{
-		return -1;
-	}
+        if(!ms)
+        {
+                return -1;
+        }
 
-	if(ms->formatdata)
-	{
-		free(ms->formatdata);
-		ms->formatdata = 0;
-	}
+        if(ms->formatdata)
+        {
+                free(ms->formatdata);
+                ms->formatdata = 0;
+        }
 
-	return 0;
+        return 0;
 }
+
 
 static int one(const struct mark5_stream *ms)
 {
@@ -2946,11 +2986,11 @@ static int onenc(struct mark5_stream *ms)
 	return 1;
 }
 
-struct mark5_format_generic *new_mark5_format_mark5b(int Mbps, int nchan, int nbit, int decimation)
+struct mark5_format_generic *new_mark5_format_kvn5b(int Mbps, int nchan, int nbit, int decimation)
 {
 	static int first = 1;
 	struct mark5_format_generic *f;
-	struct mark5_format_mark5b *m;
+	struct mark5_format_kvn5b *m;
 	int decoderindex = 0;
 	int nbitstream;
 
@@ -2989,7 +3029,7 @@ struct mark5_format_generic *new_mark5_format_mark5b(int Mbps, int nchan, int nb
 	}
 	else
 	{
-		fprintf(m5stderr, "new_mark5_format_mark5b : nbit needs to be 1 or 2\n");
+		fprintf(m5stderr, "new_mark5_format_kvn5b : nbit needs to be 1 or 2\n");
 
 		return 0;
 	}
@@ -3020,7 +3060,7 @@ struct mark5_format_generic *new_mark5_format_mark5b(int Mbps, int nchan, int nb
 	}
 	else
 	{
-		fprintf(m5stderr, "new_mark5_format_mark5b : nbitstream needs to be 1, 2, 4, 8, 16 or 32\n");
+		fprintf(m5stderr, "new_mark5_format_kvn5b : nbitstream needs to be 1, 2, 4, 8, 16 or 32\n");
 
 		return 0;
 	}
@@ -3031,7 +3071,7 @@ struct mark5_format_generic *new_mark5_format_mark5b(int Mbps, int nchan, int nb
 		return 0;
 	}
 
-	m = (struct mark5_format_mark5b *)calloc(1, sizeof(struct mark5_format_mark5b));
+	m = (struct mark5_format_kvn5b *)calloc(1, sizeof(struct mark5_format_kvn5b));
 	f = (struct mark5_format_generic *)calloc(1, sizeof(struct mark5_format_generic));
 
 	m->nbitstream = nbitstream;
@@ -3040,14 +3080,14 @@ struct mark5_format_generic *new_mark5_format_mark5b(int Mbps, int nchan, int nb
 	f->nchan = nchan;
 	f->nbit = nbit;
 	f->formatdata = m;
-	f->formatdatasize = sizeof(struct mark5_format_mark5b);
-	f->gettime = mark5_stream_frame_time_mark5b;
-	f->init_format = mark5_format_mark5b_init;
-	f->final_format = mark5_format_mark5b_final;
-	f->fixmjd = mark5_format_mark5b_fixmjd;
+	f->formatdatasize = sizeof(struct mark5_format_kvn5b);
+	f->gettime = mark5_stream_frame_time_kvn5b;
+	f->init_format = mark5_format_kvn5b_init;
+	f->final_format = mark5_format_kvn5b_final;
+	f->fixmjd = mark5_format_kvn5b_fixmjd;
 	f->validate = one;
 	f->resync = onenc;
-	f->genheaders = mark5_format_mark5b_genheaders;
+	f->genheaders = mark5_format_kvn5b_genheaders;
 	f->decimation = decimation;
 	f->decode = 0;
 	f->complex_decode = 0;
@@ -3055,126 +3095,126 @@ struct mark5_format_generic *new_mark5_format_mark5b(int Mbps, int nchan, int nb
 	switch(decoderindex)
 	{
 		case 0:
-			f->decode = mark5b_decode_1bitstream_1bit_decimation1;
+			f->decode = kvn5b_decode_1bitstream_1bit_decimation1;
 			break;
 		case 1:
-			f->decode = mark5b_decode_2bitstream_1bit_decimation1;
+			f->decode = kvn5b_decode_2bitstream_1bit_decimation1;
 			break;
 		case 2:
-			f->decode = mark5b_decode_4bitstream_1bit_decimation1;
+			f->decode = kvn5b_decode_4bitstream_1bit_decimation1;
 			break;
 		case 3:
-			f->decode = mark5b_decode_8bitstream_1bit_decimation1;
+			f->decode = kvn5b_decode_8bitstream_1bit_decimation1;
 			break;
 		case 4:
-			f->decode = mark5b_decode_16bitstream_1bit_decimation1;
+			f->decode = kvn5b_decode_16bitstream_1bit_decimation1;
 			break;
 		case 5:
-			f->decode = mark5b_decode_32bitstream_1bit_decimation1;
+			f->decode = kvn5b_decode_32bitstream_1bit_decimation1;
 			break;
 		case 7:
-			f->decode = mark5b_decode_2bitstream_2bit_decimation1;
-			f->count = mark5b_count_2bitstream_2bit_decimation1;
+			f->decode = kvn5b_decode_2bitstream_2bit_decimation1;
+			f->count = kvn5b_count_2bitstream_2bit_decimation1;
 			break;
 		case 8:
-			f->decode = mark5b_decode_4bitstream_2bit_decimation1;
-			f->count = mark5b_count_4bitstream_2bit_decimation1;
+			f->decode = kvn5b_decode_4bitstream_2bit_decimation1;
+			f->count = kvn5b_count_4bitstream_2bit_decimation1;
 			break;
 		case 9:
-			f->decode = mark5b_decode_8bitstream_2bit_decimation1;
-			f->count = mark5b_count_8bitstream_2bit_decimation1;
+			f->decode = kvn5b_decode_8bitstream_2bit_decimation1;
+			f->count = kvn5b_count_8bitstream_2bit_decimation1;
 			break;
 		case 10:
-			f->decode = mark5b_decode_16bitstream_2bit_decimation1;
-			f->count = mark5b_count_16bitstream_2bit_decimation1;
+			f->decode = kvn5b_decode_16bitstream_2bit_decimation1;
+			f->count = kvn5b_count_16bitstream_2bit_decimation1;
 			break;
 		case 11:
-			f->decode = mark5b_decode_32bitstream_2bit_decimation1;
-			f->count = mark5b_count_32bitstream_2bit_decimation1;
+			f->decode = kvn5b_decode_32bitstream_2bit_decimation1;
+			f->count = kvn5b_count_32bitstream_2bit_decimation1;
 			break;
 		case 12:
-			f->decode = mark5b_decode_1bitstream_1bit_decimation2;
+			f->decode = kvn5b_decode_1bitstream_1bit_decimation2;
 			break;
 		case 13:
-			f->decode = mark5b_decode_2bitstream_1bit_decimation2;
+			f->decode = kvn5b_decode_2bitstream_1bit_decimation2;
 			break;
 		case 14:
-			f->decode = mark5b_decode_4bitstream_1bit_decimation2;
+			f->decode = kvn5b_decode_4bitstream_1bit_decimation2;
 			break;
 		case 15:
-			f->decode = mark5b_decode_8bitstream_1bit_decimation2;
+			f->decode = kvn5b_decode_8bitstream_1bit_decimation2;
 			break;
 		case 16:
-			f->decode = mark5b_decode_16bitstream_1bit_decimation2;
+			f->decode = kvn5b_decode_16bitstream_1bit_decimation2;
 			break;
 		case 17:
-			f->decode = mark5b_decode_32bitstream_1bit_decimation2;
+			f->decode = kvn5b_decode_32bitstream_1bit_decimation2;
 			break;
 		case 19:
-			f->decode = mark5b_decode_2bitstream_2bit_decimation2;
-			f->count = mark5b_count_2bitstream_2bit_decimation2;
+			f->decode = kvn5b_decode_2bitstream_2bit_decimation2;
+			f->count = kvn5b_count_2bitstream_2bit_decimation2;
 			break;
 		case 20:
-			f->decode = mark5b_decode_4bitstream_2bit_decimation2;
-			f->count = mark5b_count_4bitstream_2bit_decimation2;
+			f->decode = kvn5b_decode_4bitstream_2bit_decimation2;
+			f->count = kvn5b_count_4bitstream_2bit_decimation2;
 			break;
 		case 21:
-			f->decode = mark5b_decode_8bitstream_2bit_decimation2;
-			f->count = mark5b_count_8bitstream_2bit_decimation2;
+			f->decode = kvn5b_decode_8bitstream_2bit_decimation2;
+			f->count = kvn5b_count_8bitstream_2bit_decimation2;
 			break;
 		case 22:
-			f->decode = mark5b_decode_16bitstream_2bit_decimation2;
-			f->count = mark5b_count_16bitstream_2bit_decimation2;
+			f->decode = kvn5b_decode_16bitstream_2bit_decimation2;
+			f->count = kvn5b_count_16bitstream_2bit_decimation2;
 			break;
 		case 23:
-			f->decode = mark5b_decode_32bitstream_2bit_decimation2;
-			f->count = mark5b_count_32bitstream_2bit_decimation2;
+			f->decode = kvn5b_decode_32bitstream_2bit_decimation2;
+			f->count = kvn5b_count_32bitstream_2bit_decimation2;
 			break;
 		case 24:
 			/* special case needing explicit decimation4 case */
 			if(decimation == 4)
 			{
-				f->decode = mark5b_decode_1bitstream_1bit_decimation4; 
+				f->decode = kvn5b_decode_1bitstream_1bit_decimation4; 
 			}
 			else if(decimation % 8 == 0)
 			{
-				f->decode = mark5b_decode_1bitstream_1bit_decimation8; 
+				f->decode = kvn5b_decode_1bitstream_1bit_decimation8; 
 			}
 			break;
 		case 25:
-			f->decode = mark5b_decode_2bitstream_1bit_decimation4;
+			f->decode = kvn5b_decode_2bitstream_1bit_decimation4;
 			break;
 		case 26:
-			f->decode = mark5b_decode_4bitstream_1bit_decimation4;
+			f->decode = kvn5b_decode_4bitstream_1bit_decimation4;
 			break;
 		case 27:
-			f->decode = mark5b_decode_8bitstream_1bit_decimation4;
+			f->decode = kvn5b_decode_8bitstream_1bit_decimation4;
 			break;
 		case 28:
-			f->decode = mark5b_decode_16bitstream_1bit_decimation4;
+			f->decode = kvn5b_decode_16bitstream_1bit_decimation4;
 			break;
 		case 29:
-			f->decode = mark5b_decode_32bitstream_1bit_decimation4;
+			f->decode = kvn5b_decode_32bitstream_1bit_decimation4;
 			break;
 		case 31:
-			f->decode = mark5b_decode_2bitstream_2bit_decimation4;
-			f->count = mark5b_count_2bitstream_2bit_decimation4;
+			f->decode = kvn5b_decode_2bitstream_2bit_decimation4;
+			f->count = kvn5b_count_2bitstream_2bit_decimation4;
 			break;
 		case 32:
-			f->decode = mark5b_decode_4bitstream_2bit_decimation4;
-			f->count = mark5b_count_4bitstream_2bit_decimation4;
+			f->decode = kvn5b_decode_4bitstream_2bit_decimation4;
+			f->count = kvn5b_count_4bitstream_2bit_decimation4;
 			break;
 		case 33:
-			f->decode = mark5b_decode_8bitstream_2bit_decimation4;
-			f->count = mark5b_count_8bitstream_2bit_decimation4;
+			f->decode = kvn5b_decode_8bitstream_2bit_decimation4;
+			f->count = kvn5b_count_8bitstream_2bit_decimation4;
 			break;
 		case 34:
-			f->decode = mark5b_decode_16bitstream_2bit_decimation4;
-			f->count = mark5b_count_16bitstream_2bit_decimation4;
+			f->decode = kvn5b_decode_16bitstream_2bit_decimation4;
+			f->count = kvn5b_count_16bitstream_2bit_decimation4;
 			break;
 		case 35:
-			f->decode = mark5b_decode_32bitstream_2bit_decimation4;
-			f->count = mark5b_count_32bitstream_2bit_decimation4;
+			f->decode = kvn5b_decode_32bitstream_2bit_decimation4;
+			f->count = kvn5b_count_32bitstream_2bit_decimation4;
 			break;
 	}
 

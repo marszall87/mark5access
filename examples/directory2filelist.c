@@ -27,6 +27,9 @@
 //
 //============================================================================
 
+#define _LARGEFILE64_SOURCE 1
+#define _FILE_OFFSET_BITS 64
+
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -74,7 +77,7 @@ int usage(const char *pgm)
 	printf("    VLBA1_2-256-8-2\n");
 	printf("    MKIV1_4-128-2-1\n");
 	printf("    Mark5B-512-16-2\n\n");
-	printf("  [<refMJD>]  changes the reference MJD (default is %u)\n\n", DEFAULT_MJD);
+	printf("  [<refMJD>]  changes the reference MJD (default is %d)\n\n", DEFAULT_MJD);
 
 	return 0;
 }
@@ -83,12 +86,14 @@ int is_reasonable_timediff(double startmjd, double stopmjd)
 {
 	int startday = (int)startmjd;
 	int stopday = (int)stopmjd;
-	return ( (startmjd <= stopmjd) && ((stopday == startday) || (stopday == (startday+1))) );
+	return ( (startmjd <= stopmjd) && ((stopday-startday) <= 1) );
 }
 
 struct mark5_stream *openmk5(const char *filename, const char *formatname, long *offset)
 {
 	struct mark5_stream *ms;
+	long offset0 = *offset;
+	char did_fail = 0;
 	while (1) {
                 ms = new_mark5_stream_absorb(
                         new_mark5_stream_file(filename, *offset),
@@ -96,11 +101,25 @@ struct mark5_stream *openmk5(const char *filename, const char *formatname, long 
 
                 if(!ms)
                 {
-                        fprintf(stderr, "problem opening %s\n", filename);
-                        break;
+			if (*offset < (offset0 + 32*43500L))
+			{
+                        	fprintf(stderr, "problem at initial decode of %s at offset %ld, trying new offset\n", filename, (int64_t)(*offset));
+				*offset += 43500;
+				did_fail = 1;
+				continue;
+			}
+			else
+			{
+                        	fprintf(stderr, "problem opening %s\n", filename);
+	                        break;
+			}
                 }
-                if (0 == (ms->samprate % 1000) && ms->samprate>0)
+                if(0 == (ms->samprate % 1000) && ms->samprate>0)
                 {
+			if (did_fail)
+			{
+				fprintf(stderr, "decode %s at offset %ld succeeded\n\n", filename, (int64_t)(*offset));
+			}
                         break;
                 }
                 fprintf(stderr, "File offset %ld: decoded suspect sample rate %d, trying new offset\n", *offset, ms->samprate);
@@ -114,9 +133,9 @@ int verify(const char *filename, const char *formatname, int refMJD)
 {
 	struct mark5_stream *ms;
 	int i;
-	int  status = 0;
+	int status = 0, corrupt = 0;
 	int mjd, sec;
-        double ns, startmjd, stopmjd=0.0, eofmjd=0.0;
+        double ns, startmjd, stopmjd = 0.0, eofmjd = 0.0;
 	long validoffset = 0;
 
 	// open with seeking to first valid-looking frame pair
@@ -134,6 +153,7 @@ int verify(const char *filename, const char *formatname, int refMJD)
 
 	mark5_stream_get_frame_time(ms, &mjd, &sec, &ns);
 	startmjd = mjd + (sec + ns/1e9) / 86400.0;
+	stopmjd = startmjd;
 	DEFAULT_EOF_READLEN = ms->datawindowsize;
 
 	FILE *fp = fopen(filename, "rb");
@@ -165,20 +185,46 @@ int verify(const char *filename, const char *formatname, int refMJD)
 		{
 			break;
 		}
+
+		if(ms->nvalidatefail > 1024)
+		{
+			fprintf(stderr, "Warning: too many frame validation failures sequentially scanning file %s\n", filename);
+			corrupt = 1;
+			break;
+		}
+
 		if(i%1 == 0)
 		{
 			int mjd, sec;
 			double ns;
+
 			mark5_stream_get_frame_time(ms, &mjd, &sec, &ns);
-			stopmjd = mjd + (sec + ns/1e9) / 86400.0;
 
-		}
-		status = mark5_stream_next_frame(ms); 
+			if((mjd - (int)stopmjd) >= 2 || (mjd < (int)stopmjd))
+			{
+#ifdef DEBUG
+				int gday = (int)stopmjd;
+				double gsec = (stopmjd - (double)gday) * 24.0*3600.0;
 
-		if(ms->nvalidatefail > 20)
-		{
-			break;
+				fprintf(stderr, "Jump in MJD day (%d/%.4fs (mjd=%.6f) -> %d/%.4fs), "
+						"trying to resync\n", 
+						gday, gsec, stopmjd, mjd, sec+ns*1e-9);
+#endif
+
+				status = mark5_stream_resync(ms);
+				status = mark5_stream_next_frame(ms);
+				corrupt = 1;
+
+				continue;
+			}
+			else
+			{
+				stopmjd = mjd + (sec + ns/1e9) / 86400.0;
+			}
 		}
+
+		status = mark5_stream_next_frame(ms);
+
 	}
 
 	delete_mark5_stream(ms);
@@ -201,43 +247,39 @@ int verify(const char *filename, const char *formatname, int refMJD)
 
 	delete_mark5_stream(ms);
 
-	// check that start and stop time are quite valid
-	if (!is_reasonable_timediff(startmjd, stopmjd))
-	{
-		fprintf (stderr, "Error: timestamps suspicious (either stop(%lf)<=start(%lf) or stop>>start) in file %s\n", stopmjd, startmjd, filename);
-	}
-	if ((int)eofmjd != (int)stopmjd)
-	{
-		fprintf (stderr, "Error: eof day (%d) != stop day (%d) in file %s\n", (int)eofmjd, (int)stopmjd, filename);
-	}
+#ifdef DEBUG
+	fprintf(stderr, "Timing: MJD start=%lf stop=%lf eof=%lf in %s\n", startmjd, stopmjd, eofmjd, filename);
+#endif
 
-	// output for debug/verbose
-	//fprintf (stderr, "%s %lf %lf %lf\n", filename, startmjd, stopmjd, eofmjd);
+	// choose most plausible scan data stop time in presence of frame or sync errors
 
-	// choose most plausible ending time
-	if (is_reasonable_timediff(startmjd, stopmjd))
+	// both Stop and EOF MJD corrupt?
+	if(!is_reasonable_timediff(startmjd, stopmjd) && !is_reasonable_timediff(startmjd, eofmjd))
 	{
-		fprintf (stdout, "%s %lf %lf\n", filename, startmjd, stopmjd);
+		stopmjd = startmjd;
+		corrupt = 1;
 	}
-	else if (is_reasonable_timediff(startmjd, eofmjd))
+	// both Stop and EOF MJD look good?
+	else if(is_reasonable_timediff(startmjd, stopmjd) && is_reasonable_timediff(startmjd, eofmjd))
 	{
-		fprintf (stdout, "%s %lf %lf\n", filename, startmjd, eofmjd);
+		stopmjd = fmax(stopmjd, eofmjd);
 	}
+	// either Stop or EOF MJD is corrupt
 	else
 	{
-		if (eofmjd>startmjd)
+		if(is_reasonable_timediff(startmjd,eofmjd))
 		{
-			fprintf (stdout, "%s %lf %lf\n", filename, startmjd, eofmjd);
+			stopmjd = eofmjd;
 		}
-		else if(stopmjd>startmjd)
-		{
-			fprintf (stdout, "%s %lf %lf\n", filename, startmjd, stopmjd);
-		}
-		else
-		{
-			fprintf (stdout, "%s\n", filename);
-		}
+		corrupt = 1;
 	}
+
+	if(corrupt)
+	{
+		fprintf(stderr, "Warning: found corrupt data frames in file %s\n", filename);
+	}
+
+	fprintf(stdout, "%s %lf %lf\n", filename, startmjd, stopmjd);
 
 	return 0;
 }
@@ -263,7 +305,9 @@ int main(int argc, char **argv)
 		return EXIT_FAILURE;
 	}
 
-	dir = argv[1];
+	dir = (char*)malloc(PATH_MAX+1);
+	dir = strncpy(dir, argv[1], PATH_MAX+1);
+	dir = strcat(dir, "/");
 	fmt = argv[2];
 	refMJD = (argc==4) ? atoi(argv[3]) : DEFAULT_MJD;
 

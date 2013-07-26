@@ -21,8 +21,11 @@ bin_PROGRAMS = \
 	m5bstate \
 	m5d \
 	m5fold \
+	m5timeseries \
 	m5tsys \
 	m5test \
+	m5time \
+	m5slice \
 	m5findformats \
 	test5b \
 	test_mark5_stream \

@@ -1,4 +1,4 @@
-AC_INIT([mark5access], [1.4.3], [Walter Brisken <wbrisken@nrao.edu>])
+AC_INIT([mark5access], [1.5.0], [Walter Brisken <wbrisken@nrao.edu>])
 
 AM_CONFIG_HEADER(config.h)
 
@@ -23,8 +23,9 @@ PACKAGE_VERSION=AC_PACKAGE_VERSION
 AC_SUBST([PACKAGE_VERSION])
 AC_SUBST([LIBRARY_VERSION])
 
-AM_INIT_AUTOMAKE
+AM_INIT_AUTOMAKE([foreign])
 
+AC_SYS_LARGEFILE
 AC_PROG_CC
 AM_PROG_CC_C_O
 AM_PROG_LIBTOOL
